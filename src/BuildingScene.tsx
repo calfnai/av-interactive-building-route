@@ -5,7 +5,6 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   BLOCKED_EVENTS,
-  FLOOR_HEIGHT,
   FLOORS,
   ROUTE_EVENTS,
   SPATIAL_CONNECTIONS,
@@ -16,11 +15,13 @@ import {
   type Vec3,
 } from "./spatial-data";
 
+export type CameraCommand = "overview" | "route" | "chase" | "top";
+
 interface BuildingSceneProps {
   progress: number;
   currentEvent: RouteEvent;
   floorFocus: number | null;
-  cameraCommand: "overview" | "route" | "top";
+  cameraCommand: CameraCommand;
   commandVersion: number;
 }
 
@@ -43,6 +44,40 @@ function makeLine(points: THREE.Vector3[], color: number, opacity = 1) {
   const geometry = new THREE.BufferGeometry().setFromPoints(points);
   const material = new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity });
   return new THREE.Line(geometry, material);
+}
+
+function routePoseAt(progress: number) {
+  const maxIndex = ROUTE_EVENTS.length - 1;
+  const scaled = Math.max(0, Math.min(1, progress)) * maxIndex;
+  const startIndex = Math.min(Math.floor(scaled), maxIndex - 1);
+  const alpha = scaled - startIndex;
+  const from = toVector(ROUTE_EVENTS[startIndex].position);
+  const to = toVector(ROUTE_EVENTS[Math.min(startIndex + 1, maxIndex)].position);
+  const position = from.clone().lerp(to, alpha);
+  let direction = to.clone().sub(from);
+  direction.y *= 0.25;
+
+  if (direction.lengthSq() < 0.01) {
+    direction = new THREE.Vector3(0, 0, -1);
+  }
+
+  return { position, direction: direction.normalize(), startIndex };
+}
+
+function applyChaseCamera(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  position: THREE.Vector3,
+  direction: THREE.Vector3,
+) {
+  const lookAt = position.clone().add(direction.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, 0.55, 0));
+  const cameraPosition = position
+    .clone()
+    .add(direction.clone().multiplyScalar(-4.3))
+    .add(new THREE.Vector3(0, 1.65, 0));
+  camera.position.lerp(cameraPosition, 0.22);
+  controls.target.lerp(lookAt, 0.28);
+  controls.update();
 }
 
 function createTextSprite(text: string, color = "#dce7e8", scale = 1) {
@@ -308,13 +343,8 @@ export default function BuildingScene({
     const marker = markerRef.current;
     const route = routeRef.current;
     if (!marker || !route) return;
-    const maxIndex = ROUTE_EVENTS.length - 1;
-    const scaled = Math.max(0, Math.min(1, progress)) * maxIndex;
-    const startIndex = Math.min(Math.floor(scaled), maxIndex - 1);
-    const alpha = scaled - startIndex;
-    const from = toVector(ROUTE_EVENTS[startIndex].position);
-    const to = toVector(ROUTE_EVENTS[Math.min(startIndex + 1, maxIndex)].position);
-    marker.position.copy(from.lerp(to, alpha));
+    const { position, direction, startIndex } = routePoseAt(progress);
+    marker.position.copy(position);
     const geometry = new THREE.BufferGeometry().setFromPoints(
       ROUTE_EVENTS.slice(0, startIndex + 1)
         .map((item) => toVector(item.position))
@@ -323,7 +353,13 @@ export default function BuildingScene({
     route.geometry.dispose();
     route.geometry = geometry;
     (route.material as THREE.LineBasicMaterial).opacity = 0.96;
-  }, [progress]);
+
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (cameraCommand === "chase" && camera && controls) {
+      applyChaseCamera(camera, controls, position, direction);
+    }
+  }, [progress, cameraCommand]);
 
   useEffect(() => {
     for (const [floor, group] of focusGroupsRef.current.entries()) {
@@ -347,6 +383,10 @@ export default function BuildingScene({
     if (cameraCommand === "top") {
       camera.position.set(0, 52, 0.1);
       controls.target.set(0, 10, 0);
+    } else if (cameraCommand === "chase") {
+      const { position, direction } = routePoseAt(progress);
+      camera.position.copy(position.clone().add(direction.clone().multiplyScalar(-4.3)).add(new THREE.Vector3(0, 1.65, 0)));
+      controls.target.copy(position.clone().add(direction.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, 0.55, 0)));
     } else if (cameraCommand === "route") {
       const target = toVector(currentEvent.position);
       camera.position.copy(target.clone().add(new THREE.Vector3(12, 8, 13)));
@@ -360,4 +400,3 @@ export default function BuildingScene({
 
   return <div className="scene-host" ref={hostRef} />;
 }
-

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import BuildingScene from "./BuildingScene";
+import BuildingScene, { type CameraCommand } from "./BuildingScene";
 import { BLOCKED_EVENTS, CHAPTERS, ROUTE_EVENTS } from "./spatial-data";
 
 const statusLabel = {
@@ -18,7 +18,7 @@ export default function InteractiveModel() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [floorFocus, setFloorFocus] = useState<number | null>(null);
-  const [cameraCommand, setCameraCommand] = useState<"overview" | "route" | "top">("overview");
+  const [cameraCommand, setCameraCommand] = useState<CameraCommand>("overview");
   const [commandVersion, setCommandVersion] = useState(0);
   const [panelOpen, setPanelOpen] = useState(true);
 
@@ -62,7 +62,7 @@ export default function InteractiveModel() {
     setCommandVersion((value) => value + 1);
   };
 
-  const setCamera = (command: "overview" | "route" | "top") => {
+  const setCamera = (command: CameraCommand) => {
     setCameraCommand(command);
     setCommandVersion((value) => value + 1);
   };
@@ -97,6 +97,7 @@ export default function InteractiveModel() {
         <div className="scene-tools" aria-label="三维视角控制">
           <button className={cameraCommand === "overview" ? "active" : ""} onClick={() => setCamera("overview")}>全楼</button>
           <button className={cameraCommand === "route" ? "active" : ""} onClick={() => setCamera("route")}>跟随</button>
+          <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
           <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
           <select
             value={floorFocus ?? "all"}
@@ -197,4 +198,3 @@ export default function InteractiveModel() {
     </main>
   );
 }
-
