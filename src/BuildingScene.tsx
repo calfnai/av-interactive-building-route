@@ -54,30 +54,46 @@ function routePoseAt(progress: number) {
   const from = toVector(ROUTE_EVENTS[startIndex].position);
   const to = toVector(ROUTE_EVENTS[Math.min(startIndex + 1, maxIndex)].position);
   const position = from.clone().lerp(to, alpha);
-  let direction = to.clone().sub(from);
-  direction.y *= 0.25;
+  const movement = to.clone().sub(from);
+  const flatMovement = new THREE.Vector3(movement.x, 0, movement.z);
 
-  if (direction.lengthSq() < 0.01) {
-    direction = new THREE.Vector3(0, 0, -1);
+  if (flatMovement.lengthSq() < 0.01) {
+    return { position, heading: null, startIndex };
   }
 
-  return { position, direction: direction.normalize(), startIndex };
+  return { position, heading: flatMovement.normalize(), startIndex };
 }
 
 function applyChaseCamera(
   camera: THREE.PerspectiveCamera,
   controls: OrbitControls,
   position: THREE.Vector3,
-  direction: THREE.Vector3,
+  heading: THREE.Vector3,
+  immediate = false,
 ) {
-  const lookAt = position.clone().add(direction.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, 0.55, 0));
+  const right = new THREE.Vector3(heading.z, 0, -heading.x);
+  const lookAt = position
+    .clone()
+    .add(heading.clone().multiplyScalar(1.55))
+    .add(new THREE.Vector3(0, 0.95, 0));
   const cameraPosition = position
     .clone()
-    .add(direction.clone().multiplyScalar(-4.3))
-    .add(new THREE.Vector3(0, 1.65, 0));
-  camera.position.lerp(cameraPosition, 0.22);
-  controls.target.lerp(lookAt, 0.28);
+    .add(heading.clone().multiplyScalar(-3.9))
+    .add(right.multiplyScalar(0.62))
+    .add(new THREE.Vector3(0, 1.75, 0));
+
+  if (immediate) {
+    camera.position.copy(cameraPosition);
+    controls.target.copy(lookAt);
+  } else {
+    camera.position.lerp(cameraPosition, 0.18);
+    controls.target.lerp(lookAt, 0.24);
+  }
   controls.update();
+}
+
+function faceMarker(marker: THREE.Group, heading: THREE.Vector3) {
+  marker.rotation.y = Math.atan2(heading.x, heading.z);
 }
 
 function createTextSprite(text: string, color = "#dce7e8", scale = 1) {
@@ -148,6 +164,7 @@ export default function BuildingScene({
   const controlsRef = useRef<OrbitControls | null>(null);
   const markerRef = useRef<THREE.Group | null>(null);
   const routeRef = useRef<THREE.Line | null>(null);
+  const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
   useEffect(() => {
@@ -288,16 +305,28 @@ export default function BuildingScene({
     }
 
     const marker = new THREE.Group();
-    const glow = new THREE.Mesh(
-      new THREE.SphereGeometry(0.3, 24, 18),
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.18, 0.55, 6, 14),
       new THREE.MeshBasicMaterial({ color: palette.route }),
     );
+    body.position.y = 0.62;
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.17, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }),
+    );
+    head.position.y = 1.08;
+    const facing = new THREE.Mesh(
+      new THREE.ConeGeometry(0.13, 0.32, 16),
+      new THREE.MeshBasicMaterial({ color: 0xffd966 }),
+    );
+    facing.rotation.x = Math.PI / 2;
+    facing.position.set(0, 0.7, 0.33);
     const halo = new THREE.Mesh(
       new THREE.TorusGeometry(0.52, 0.045, 8, 40),
       new THREE.MeshBasicMaterial({ color: palette.route, transparent: true, opacity: 0.78 }),
     );
     halo.rotation.x = Math.PI / 2;
-    marker.add(glow, halo);
+    marker.add(body, head, facing, halo);
     marker.position.copy(routePoints[0]);
     markerRef.current = marker;
     scene.add(marker);
@@ -317,7 +346,7 @@ export default function BuildingScene({
       frame = requestAnimationFrame(animate);
       const t = clock.getElapsedTime();
       halo.rotation.z = t * 0.65;
-      glow.scale.setScalar(1 + Math.sin(t * 4) * 0.08);
+      body.scale.setScalar(1 + Math.sin(t * 4) * 0.035);
       controls.update();
       renderer.render(scene, camera);
     };
@@ -343,8 +372,12 @@ export default function BuildingScene({
     const marker = markerRef.current;
     const route = routeRef.current;
     if (!marker || !route) return;
-    const { position, direction, startIndex } = routePoseAt(progress);
+    const { position, heading, startIndex } = routePoseAt(progress);
+    if (heading) {
+      characterHeadingRef.current.lerp(heading, 0.32).normalize();
+    }
     marker.position.copy(position);
+    faceMarker(marker, characterHeadingRef.current);
     const geometry = new THREE.BufferGeometry().setFromPoints(
       ROUTE_EVENTS.slice(0, startIndex + 1)
         .map((item) => toVector(item.position))
@@ -357,7 +390,7 @@ export default function BuildingScene({
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (cameraCommand === "chase" && camera && controls) {
-      applyChaseCamera(camera, controls, position, direction);
+      applyChaseCamera(camera, controls, position, characterHeadingRef.current);
     }
   }, [progress, cameraCommand]);
 
@@ -384,9 +417,9 @@ export default function BuildingScene({
       camera.position.set(0, 52, 0.1);
       controls.target.set(0, 10, 0);
     } else if (cameraCommand === "chase") {
-      const { position, direction } = routePoseAt(progress);
-      camera.position.copy(position.clone().add(direction.clone().multiplyScalar(-4.3)).add(new THREE.Vector3(0, 1.65, 0)));
-      controls.target.copy(position.clone().add(direction.clone().multiplyScalar(2.4)).add(new THREE.Vector3(0, 0.55, 0)));
+      const { position, heading } = routePoseAt(progress);
+      if (heading) characterHeadingRef.current.copy(heading);
+      applyChaseCamera(camera, controls, position, characterHeadingRef.current, true);
     } else if (cameraCommand === "route") {
       const target = toVector(currentEvent.position);
       camera.position.copy(target.clone().add(new THREE.Vector3(12, 8, 13)));
