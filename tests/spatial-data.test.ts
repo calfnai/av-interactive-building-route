@@ -25,8 +25,16 @@ test("hard barriers cannot be traversed", () => {
 });
 
 test("route retains every required detour and keyed finish", () => {
-  assert.equal(ROUTE_EVENTS.length, 44);
+  assert.equal(ROUTE_EVENTS.length, 43);
   assert.ok(ROUTE_EVENTS.filter((item) => item.status === "wrong").length >= 6);
+  assert.equal(ROUTE_EVENTS.some((item) => item.id === "u1-f8-lift"), false);
+  assert.deepEqual(
+    ROUTE_EVENTS.slice(
+      ROUTE_EVENTS.findIndex((item) => item.id === "u1-f8-public"),
+      ROUTE_EVENTS.findIndex((item) => item.id === "u1-f7-public-a") + 1,
+    ).map((item) => item.id),
+    ["u1-f8-public", "u1-f8-door-a", "u1-f8-room-a", "u1-f7-room-a", "u1-f7-public-a"],
+  );
   assert.equal(ROUTE_EVENTS.at(-2)?.id, "u1-f6-correct-door");
   assert.equal(ROUTE_EVENTS.at(-1)?.status, "finish");
 });
