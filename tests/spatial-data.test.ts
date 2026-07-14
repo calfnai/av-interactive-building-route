@@ -79,6 +79,7 @@ test("interior movement never changes floors", () => {
     assert.ok(from && to);
     assert.equal(from.floor, to.floor, `${edge.from} -> ${edge.to} must stay on the same floor`);
   }
+  assert.equal(interiorEdges.some((edge) => /u1-f7-room/.test(edge.from) || /u1-f7-room/.test(edge.to)), false);
 });
 
 test("route floor changes only happen through stairs or elevator", () => {

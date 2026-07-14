@@ -63,7 +63,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
         id: `u${unit}-f${floor}-public`,
         unit,
         floor,
-        label: `${unit}单元 ${floor}F 公共区`,
+        label: `Unit ${unit} ${floor}F Public Area`,
         kind: "public",
         access: "open",
         position: [x, y, 0],
@@ -72,7 +72,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
         id: `u${unit}-f${floor}-stair`,
         unit,
         floor,
-        label: `${unit}单元 ${floor}F 楼梯`,
+        label: `Unit ${unit} ${floor}F Stair`,
         kind: "stair",
         access: unit === 1 && floor === 10 ? "locked" : "open",
         position: [x - (unit === 1 ? 2.4 : -2.4), y, -2.25],
@@ -82,7 +82,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
           id: `u${unit}-f${floor}-door-${room.toLowerCase()}`,
           unit,
           floor,
-          label: `${unit}单元 ${floor}F ${room}户门`,
+          label: `Unit ${unit} ${floor}F Apt ${room} Door`,
           kind: "residenceDoor",
           access:
             unit === 1 && floor === 6 && room === "B"
@@ -96,7 +96,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
           id: `u${unit}-f${floor}-room-${room.toLowerCase()}`,
           unit,
           floor,
-          label: `${unit}单元 ${floor}F ${room}户室内`,
+          label: `Unit ${unit} ${floor}F Apt ${room} Interior`,
           kind: "residence",
           access: "conditional",
           position: [x + (index - 1) * 2.15, y, 3.15],
@@ -110,7 +110,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
           id: `u${unit}-f${floor}-elevator-hall`,
           unit,
           floor,
-          label: `${unit}单元 ${floor}F 电梯厅`,
+          label: `Unit ${unit} ${floor}F Elevator Hall`,
           kind: "elevatorHall",
           access: unit === 1 ? "card" : "conditional",
           position: [x + (unit === 1 ? 2.15 : -2.15), y, -2.25],
@@ -119,7 +119,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
           id: `u${unit}-f${floor}-elevator`,
           unit,
           floor,
-          label: `${unit}单元 ${floor}F 电梯轿厢`,
+          label: `Unit ${unit} ${floor}F Elevator Cabin`,
           kind: "elevatorCabin",
           access: "conditional",
           position: [x + (unit === 1 ? 3.15 : -3.15), y, -2.25],
@@ -134,7 +134,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
     id: `f${floor}-interconnect`,
     unit: 0,
     floor,
-    label: `${floor}F 两单元互通门`,
+    label: `${floor}F Inter-Unit Door`,
     kind: "interconnect",
     access: floor === 8 || floor === 10 ? "open" : "locked",
     position: [0, yForFloor(floor), 0],
@@ -144,7 +144,7 @@ export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
       id: "u1-f1-side-door",
       unit: 1,
       floor: 1,
-      label: "1单元 1F 侧门",
+      label: "Unit 1 1F Side Door",
       kind: "sideDoor",
       access: "open",
       position: [-10.8, yForFloor(1), 0.4],
@@ -165,7 +165,7 @@ for (const floor of FLOORS) {
           to: `u${unit}-f${floor}-door-${letter}`,
           mode: "walk",
           traversable: access !== "locked",
-          note: access === "key" ? "钥匙开启" : access === "locked" ? "住户门锁闭" : undefined,
+          note: access === "key" ? "Key required" : access === "locked" ? "Apartment door locked" : undefined,
         },
         {
           from: `u${unit}-f${floor}-door-${letter}`,
@@ -181,7 +181,7 @@ for (const floor of FLOORS) {
       to: `u${unit}-f${floor}-stair`,
       mode: "walk",
       traversable: !(unit === 1 && floor === 10),
-      note: unit === 1 && floor === 10 ? "楼梯通道门上锁" : undefined,
+      note: unit === 1 && floor === 10 ? "Stair door locked" : undefined,
     });
 
     if (!(unit === 1 && floor === 2)) {
@@ -197,7 +197,7 @@ for (const floor of FLOORS) {
           to: `u${unit}-f${floor}-elevator`,
           mode: "elevator",
           traversable: true,
-          note: unit === 1 ? "主动呼叫需门禁卡；可等待轿厢到站" : undefined,
+          note: unit === 1 ? "Access card required to call; can only wait for cabin arrival" : undefined,
         },
       );
     }
@@ -208,7 +208,7 @@ for (const floor of FLOORS) {
       to: `f${floor}-interconnect`,
       mode: "walk",
       traversable: bridgeOpen,
-      note: bridgeOpen ? "互通门可开启" : "互通门锁闭",
+      note: bridgeOpen ? "Inter-unit door can open" : "Inter-unit door locked",
     });
 
     if (floor < 10) {
@@ -224,9 +224,9 @@ for (const floor of FLOORS) {
 
 connections.push(
   { from: "u1-f1-side-door", to: "u1-f1-public", mode: "walk", traversable: true },
-  { from: "u1-f8-room-a", to: "u1-f8-room-b", mode: "interior", traversable: true, note: "住户室内同层平面通道" },
-  { from: "u1-f6-room-a", to: "u1-f6-room-b", mode: "interior", traversable: true, note: "错户室内同层平面通道" },
-  { from: "u1-f6-room-c", to: "u1-f6-room-a", mode: "interior", traversable: true, note: "错户室内同层平面通道" },
+  { from: "u1-f8-room-a", to: "u1-f8-room-b", mode: "interior", traversable: true, note: "Same-floor apartment interior passage" },
+  { from: "u1-f6-room-a", to: "u1-f6-room-b", mode: "interior", traversable: true, note: "Same-floor wrong-apartment passage" },
+  { from: "u1-f6-room-c", to: "u1-f6-room-a", mode: "interior", traversable: true, note: "Same-floor wrong-apartment passage" },
 );
 
 export const SPATIAL_CONNECTIONS = connections;

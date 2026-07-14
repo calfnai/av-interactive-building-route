@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   BLOCKED_EVENTS,
+  FLOOR_HEIGHT,
   FLOORS,
   ROUTE_EVENTS,
   SPATIAL_CONNECTIONS,
@@ -171,16 +172,19 @@ function addFlatDoor(
 
 function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
   const direction = unit === 1 ? -1 : 1;
-  for (let index = 0; index < 7; index += 1) {
+  const stepCount = 18;
+  for (let index = 0; index < stepCount; index += 1) {
+    const alpha = index / (stepCount - 1);
     addBox(
       group,
-      [1.12, 0.09, 0.34],
-      [base[0], base[1] + 0.1 + index * 0.13, base[2] + direction * (index - 3) * 0.24],
+      [1.12, 0.08, 0.3],
+      [base[0], base[1] + alpha * FLOOR_HEIGHT, base[2] + direction * (-0.88 + alpha * 1.76)],
       palette.stair,
       0.74,
     );
   }
-  addBox(group, [1.32, 1.18, 0.08], [base[0], base[1] + 0.63, base[2] - direction * 1.05], palette.stair, 0.28);
+  addBox(group, [1.34, FLOOR_HEIGHT, 0.08], [base[0], base[1] + FLOOR_HEIGHT * 0.5, base[2] - direction * 1.04], palette.stair, 0.22);
+  addBox(group, [1.34, FLOOR_HEIGHT, 0.08], [base[0], base[1] + FLOOR_HEIGHT * 0.5, base[2] + direction * 1.04], palette.stair, 0.22);
 }
 
 export default function BuildingScene({
@@ -261,11 +265,11 @@ export default function BuildingScene({
 
         const stairPosition: Vec3 = [x + (unit === 1 ? -2.4 : 2.4), y, -2.25];
         addBox(floorGroup, [1.68, 0.08, 1.78], [stairPosition[0], y + 0.04, stairPosition[2]], palette.stair, 0.22, true);
-        addStairSteps(floorGroup, stairPosition, unit);
+        if (floor < 10) addStairSteps(floorGroup, stairPosition, unit);
         if (!(unit === 1 && floor === 2)) {
           const elevatorX = x + (unit === 1 ? 2.7 : -2.7);
           addBox(floorGroup, [1.65, 1.8, 1.5], [elevatorX, y + 0.92, -2.25], palette.elevator, 0.2, true);
-          addFlatDoor(floorGroup, [elevatorX, y + 0.72, -1.43], 0.88, false, palette.elevator, floor === 6 && unit === 1 ? "6F 电梯门" : undefined);
+          addFlatDoor(floorGroup, [elevatorX, y + 0.72, -1.43], 0.88, false, palette.elevator, floor === 6 && unit === 1 ? "6F Elevator Door" : undefined);
         }
 
         for (let room = 0; room < 3; room += 1) {
@@ -280,25 +284,25 @@ export default function BuildingScene({
             0.7,
             locked,
             keyed ? 0xf2ff63 : palette.open,
-            keyed ? "钥匙门" : undefined,
+            keyed ? "Key Door" : undefined,
           );
         }
 
-        const unitLabel = createTextSprite(`${unit}单元 · ${floor}F`, unit === 1 ? "#7ce0d5" : "#7eb1ff", 0.78);
+        const unitLabel = createTextSprite(`Unit ${unit} · ${floor}F`, unit === 1 ? "#7ce0d5" : "#7eb1ff", 0.78);
         unitLabel.position.set(x, y + 1.55, -0.1);
         floorGroup.add(unitLabel);
       }
 
       addBox(floorGroup, [3.2, 0.1, 1.05], [0, y, 0], palette.floorEdge, 0.46);
       const bridgeLocked = floor !== 8 && floor !== 10;
-      addDoor(floorGroup, [0, y + 0.78, 0], bridgeLocked, `${floor}F 互通门`);
+      addDoor(floorGroup, [0, y + 0.78, 0], bridgeLocked, `${floor}F Link Door`);
 
       if (floor === 10) {
-        addDoor(floorGroup, [-9.05, y + 0.78, -1.72], true, "1单元 10F 楼梯门");
+        addDoor(floorGroup, [-9.05, y + 0.78, -1.72], true, "Unit 1 10F Stair Door");
       }
 
       if (floor === 1) {
-        addDoor(floorGroup, [-10.8, y + 0.78, 0.4], false, "1单元 1F 侧门");
+        addDoor(floorGroup, [-10.8, y + 0.78, 0.4], false, "Unit 1 1F Side Door");
       }
     }
 
