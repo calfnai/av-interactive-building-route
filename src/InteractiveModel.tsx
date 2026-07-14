@@ -163,7 +163,7 @@ export default function InteractiveModel() {
           <span><i className="unit-two" />2 单元</span>
           <span><i className="route" />已走轨迹</span>
           <span><i className="locked" />上锁 / 不可通行</span>
-          <span><i className="interior" />室内跨层</span>
+          <span><i className="interior" />室内同层</span>
         </div>
       </section>
 
