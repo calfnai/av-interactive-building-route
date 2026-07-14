@@ -47,6 +47,11 @@ export const yForFloor = (floor: number) => (floor - 1) * FLOOR_HEIGHT;
 export const unitX = (unit: 1 | 2) => (unit === 1 ? -7.2 : 7.2);
 
 const roomLetters = ["A", "B", "C"] as const;
+const p = (unit: 1 | 2, floor: number, dx: number, z: number): Vec3 => [
+  unitX(unit) + dx,
+  yForFloor(floor) + 0.38,
+  z,
+];
 
 export const SPATIAL_NODES: SpatialNode[] = FLOORS.flatMap((floor) =>
   ([1, 2] as const).flatMap((unit) => {
@@ -226,12 +231,6 @@ connections.push(
 
 export const SPATIAL_CONNECTIONS = connections;
 
-const p = (unit: 1 | 2, floor: number, dx: number, z: number): Vec3 => [
-  unitX(unit) + dx,
-  yForFloor(floor) + 0.38,
-  z,
-];
-
 const event = (
   id: string,
   chapter: number,
@@ -245,9 +244,17 @@ const event = (
 
 export const ROUTE_EVENTS: RouteEvent[] = [
   event("start", 1, p(1, 1, -2.4, -2.25), "起点 · 1F 楼梯口", "从 1 单元 1 楼楼梯口出发。", "move", 1, 1),
+  event("u1-stair-half-up", 1, [unitX(1) - 2.4, yForFloor(1) + FLOOR_HEIGHT * 0.5, -2.25], "半截楼梯上行", "正对主楼梯上行方向，逐阶步行到半截平台。", "move", 1, 1.5),
   event("f2-no-lift", 1, p(1, 2, -2.4, -2.25), "公共楼梯上至 2F", "沿公共楼梯到达 2 楼；本层没有可用电梯点位。", "blocked", 1, 2),
+  event("u1-stair-half-down", 1, [unitX(1) - 2.4, yForFloor(1) + FLOOR_HEIGHT * 0.5, -2.25], "半截楼梯折返", "沿原公共楼梯逐阶下行，不跨楼板。", "wrong", 1, 1.5),
   event("return-f1", 1, p(1, 1, -2.4, -2.25), "沿公共楼梯折返 1F", "沿原公共楼梯下行，保留第一次无效上楼和完整回撤。", "wrong", 1, 1),
-  event("side-door", 2, [-10.8, 0.38, 0.4], "打开 1F 侧门", "由侧门进入楼栋内部。", "access", 1, 1),
+  event("turn-left-90-at-origin", 2, p(1, 1, -3.15, -1.15), "原点左转 90°", "回到起点后，向左 90° 转身，面向外侧楼栋侧门。", "move", 1, 1),
+  event("side-door", 2, [-10.8, 0.38, 0.4], "打开 1F 侧门", "交互打开外侧楼栋侧门，门体开启后进入楼栋内部通道。", "access", 1, 1),
+  event("after-side-left-50", 2, p(1, 1, -2.9, 0.95), "侧门后左转 50°", "进入侧门后左转约 50°，进入内部通道第一段。", "move", 1, 1),
+  event("corridor-forward-a", 2, p(1, 1, -1.2, 1.65), "第一段直行", "沿内部通道直线向前步行。", "move", 1, 1),
+  event("corridor-right-90-a", 2, p(1, 1, 0.85, 1.15), "右转 90°", "到达转角后右转 90°，进入第二段通道。", "move", 1, 1),
+  event("corridor-forward-b", 2, p(1, 1, 0.85, -0.45), "第二段直行", "继续直线向前步行。", "move", 1, 1),
+  event("corridor-right-90-b", 2, p(1, 1, -0.65, -1.25), "再次右转 90°", "第二个转角右转 90°，朝向竖向公共楼梯。", "move", 1, 1),
   event("u1-stair-f2", 2, p(1, 2, -2.4, -2.25), "楼梯上行 · 2F", "沿内部竖向楼梯上行。", "move", 1, 2),
   event("u1-stair-f3", 2, p(1, 3, -2.4, -2.25), "楼梯上行 · 3F", "经过 3 楼。", "move", 1, 3),
   event("u1-stair-f4", 2, p(1, 4, -2.4, -2.25), "楼梯上行 · 4F", "经过 4 楼。", "move", 1, 4),

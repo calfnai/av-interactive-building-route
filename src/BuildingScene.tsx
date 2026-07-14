@@ -151,6 +151,38 @@ function addDoor(group: THREE.Group, position: Vec3, locked: boolean, label: str
   group.add(sprite);
 }
 
+function addFlatDoor(
+  group: THREE.Group,
+  position: Vec3,
+  width: number,
+  locked: boolean,
+  color: number,
+  label?: string,
+) {
+  const door = addBox(group, [width, 1.08, 0.12], position, locked ? palette.locked : color, 0.82);
+  door.userData.isDoor = true;
+  addBox(group, [0.08, 0.12, 0.1], [position[0] + width * 0.32, position[1] + 0.05, position[2] - 0.08], 0xf4f1d0, 0.95);
+  if (label) {
+    const sprite = createTextSprite(label, locked ? "#ff8b78" : "#dce7e8", 0.55);
+    sprite.position.set(position[0], position[1] + 0.82, position[2] + 0.06);
+    group.add(sprite);
+  }
+}
+
+function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
+  const direction = unit === 1 ? -1 : 1;
+  for (let index = 0; index < 7; index += 1) {
+    addBox(
+      group,
+      [1.12, 0.09, 0.34],
+      [base[0], base[1] + 0.1 + index * 0.13, base[2] + direction * (index - 3) * 0.24],
+      palette.stair,
+      0.74,
+    );
+  }
+  addBox(group, [1.32, 1.18, 0.08], [base[0], base[1] + 0.63, base[2] - direction * 1.05], palette.stair, 0.28);
+}
+
 export default function BuildingScene({
   progress,
   currentEvent,
@@ -227,13 +259,29 @@ export default function BuildingScene({
         outline.position.set(x, y, 0.7);
         floorGroup.add(outline);
 
-        addBox(floorGroup, [1.45, 1.55, 1.45], [x + (unit === 1 ? -2.4 : 2.4), y + 0.82, -2.25], palette.stair, 0.24, true);
+        const stairPosition: Vec3 = [x + (unit === 1 ? -2.4 : 2.4), y, -2.25];
+        addBox(floorGroup, [1.68, 0.08, 1.78], [stairPosition[0], y + 0.04, stairPosition[2]], palette.stair, 0.22, true);
+        addStairSteps(floorGroup, stairPosition, unit);
         if (!(unit === 1 && floor === 2)) {
-          addBox(floorGroup, [1.65, 1.8, 1.5], [x + (unit === 1 ? 2.7 : -2.7), y + 0.92, -2.25], palette.elevator, 0.2, true);
+          const elevatorX = x + (unit === 1 ? 2.7 : -2.7);
+          addBox(floorGroup, [1.65, 1.8, 1.5], [elevatorX, y + 0.92, -2.25], palette.elevator, 0.2, true);
+          addFlatDoor(floorGroup, [elevatorX, y + 0.72, -1.43], 0.88, false, palette.elevator, floor === 6 && unit === 1 ? "6F 电梯门" : undefined);
         }
 
         for (let room = 0; room < 3; room += 1) {
           addBox(floorGroup, [1.85, 1.45, 2.15], [x + (room - 1) * 2.15, y + 0.76, 3.15], palette.room, 0.5);
+          const doorId = `u${unit}-f${floor}-door-${["a", "b", "c"][room]}`;
+          const doorNode = SPATIAL_NODES.find((node) => node.id === doorId);
+          const locked = doorNode?.access === "locked";
+          const keyed = doorNode?.access === "key";
+          addFlatDoor(
+            floorGroup,
+            [x + (room - 1) * 1.65, y + 0.68, 2.02],
+            0.7,
+            locked,
+            keyed ? 0xf2ff63 : palette.open,
+            keyed ? "钥匙门" : undefined,
+          );
         }
 
         const unitLabel = createTextSprite(`${unit}单元 · ${floor}F`, unit === 1 ? "#7ce0d5" : "#7eb1ff", 0.78);
@@ -247,6 +295,10 @@ export default function BuildingScene({
 
       if (floor === 10) {
         addDoor(floorGroup, [-9.05, y + 0.78, -1.72], true, "1单元 10F 楼梯门");
+      }
+
+      if (floor === 1) {
+        addDoor(floorGroup, [-10.8, y + 0.78, 0.4], false, "1单元 1F 侧门");
       }
     }
 
@@ -306,21 +358,21 @@ export default function BuildingScene({
 
     const marker = new THREE.Group();
     const body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.18, 0.55, 6, 14),
+      new THREE.CapsuleGeometry(0.14, 0.34, 5, 12),
       new THREE.MeshBasicMaterial({ color: palette.route }),
     );
-    body.position.y = 0.62;
+    body.position.y = 0.44;
     const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.17, 16, 12),
+      new THREE.SphereGeometry(0.13, 14, 10),
       new THREE.MeshBasicMaterial({ color: 0xffffff }),
     );
-    head.position.y = 1.08;
+    head.position.y = 0.78;
     const facing = new THREE.Mesh(
-      new THREE.ConeGeometry(0.13, 0.32, 16),
+      new THREE.ConeGeometry(0.1, 0.24, 14),
       new THREE.MeshBasicMaterial({ color: 0xffd966 }),
     );
     facing.rotation.x = Math.PI / 2;
-    facing.position.set(0, 0.7, 0.33);
+    facing.position.set(0, 0.5, 0.25);
     const halo = new THREE.Mesh(
       new THREE.TorusGeometry(0.52, 0.045, 8, 40),
       new THREE.MeshBasicMaterial({ color: palette.route, transparent: true, opacity: 0.78 }),

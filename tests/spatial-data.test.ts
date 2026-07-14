@@ -25,7 +25,7 @@ test("hard barriers cannot be traversed", () => {
 });
 
 test("route retains every required detour and keyed finish", () => {
-  assert.equal(ROUTE_EVENTS.length, 47);
+  assert.equal(ROUTE_EVENTS.length, 55);
   assert.ok(ROUTE_EVENTS.filter((item) => item.status === "wrong").length >= 6);
   assert.equal(ROUTE_EVENTS.some((item) => item.id === "u1-f8-lift"), false);
   assert.deepEqual(
@@ -46,6 +46,26 @@ test("route retains every required detour and keyed finish", () => {
   );
   assert.equal(ROUTE_EVENTS.at(-2)?.id, "u1-f6-correct-door");
   assert.equal(ROUTE_EVENTS.at(-1)?.status, "finish");
+});
+
+test("initial side-door approach keeps the original turns", () => {
+  assert.deepEqual(
+    ROUTE_EVENTS.slice(0, 12).map((item) => item.id),
+    [
+      "start",
+      "u1-stair-half-up",
+      "f2-no-lift",
+      "u1-stair-half-down",
+      "return-f1",
+      "turn-left-90-at-origin",
+      "side-door",
+      "after-side-left-50",
+      "corridor-forward-a",
+      "corridor-right-90-a",
+      "corridor-forward-b",
+      "corridor-right-90-b",
+    ],
+  );
 });
 
 test("interior movement never changes floors", () => {
