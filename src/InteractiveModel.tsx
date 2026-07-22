@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import BuildingScene, { type CameraCommand } from "./BuildingScene";
-import { BLOCKED_EVENTS, CHAPTERS, ROUTE_EVENTS } from "./spatial-data";
+import HandControlPanel from "./HandControlPanel";
+import { clamp01 } from "./hand-control";
+import { BLOCKED_EVENTS, CHAPTERS, GHOST_ROUTES, ROUTE_EVENTS } from "./spatial-data";
+import { useHandController } from "./useHandController";
 
 const statusLabel = {
   move: "行进",
@@ -21,10 +24,41 @@ export default function InteractiveModel() {
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>("overview");
   const [commandVersion, setCommandVersion] = useState(0);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
+  const handController = useHandController();
+  const pinchAnchorRef = useRef({ active: false, x: 0.5, progress: 0 });
 
   const eventIndex = Math.min(ROUTE_EVENTS.length - 1, Math.round(progress * (ROUTE_EVENTS.length - 1)));
   const currentEvent = ROUTE_EVENTS[eventIndex];
   const activeChapter = currentEvent.chapter;
+  const primaryHand = handController.frame.hands[handController.frame.primaryHand];
+  const handActive = handController.frame.status === "connected" && primaryHand.tracked;
+  const gestureFloor = handActive && primaryHand.openness > 0.52
+    ? Math.max(1, Math.min(10, Math.round((1 - primaryHand.y) * 9) + 1))
+    : null;
+  const effectiveFloorFocus = gestureFloor ?? floorFocus;
+  const xray = handActive ? clamp01((primaryHand.openness - 0.38) / 0.54) : 0;
+  const floorSpread = handController.frame.status === "connected"
+    ? clamp01((handController.frame.spread - 0.18) / 0.72)
+    : 0;
+  const ghostRoute = GHOST_ROUTES[currentEvent.id] ?? null;
+  const ghostIntensity = ghostRoute ? xray : 0;
+
+  useEffect(() => {
+    const anchor = pinchAnchorRef.current;
+    if (!handActive || !handController.frame.pinchActive) {
+      anchor.active = false;
+      return;
+    }
+    if (!anchor.active) {
+      anchor.active = true;
+      anchor.x = primaryHand.x;
+      anchor.progress = progress;
+      setPlaying(false);
+      return;
+    }
+    setProgress(clamp01(anchor.progress + (primaryHand.x - anchor.x) * 1.45));
+  }, [handActive, handController.frame.pinchActive, primaryHand.x, progress]);
 
   useEffect(() => {
     if (!playing) return;
@@ -85,13 +119,28 @@ export default function InteractiveModel() {
         </button>
       </header>
 
-      <section className="viewport">
+      <section className={`viewport ${handPanelCollapsed ? "" : "hand-control-open"}`}>
         <BuildingScene
           progress={progress}
           currentEvent={currentEvent}
-          floorFocus={floorFocus}
+          floorFocus={effectiveFloorFocus}
+          floorSpread={floorSpread}
+          xray={xray}
+          ghostRoute={ghostRoute}
+          ghostIntensity={ghostIntensity}
           cameraCommand={cameraCommand}
           commandVersion={commandVersion}
+        />
+
+        <HandControlPanel
+          frame={handController.frame}
+          videoRef={handController.videoRef}
+          overlayRef={handController.overlayRef}
+          startBrowser={handController.startBrowser}
+          connectDesktop={handController.connectDesktop}
+          stop={handController.stop}
+          collapsed={handPanelCollapsed}
+          onToggle={() => setHandPanelCollapsed((value) => !value)}
         />
 
         <div className="scene-tools" aria-label="三维视角控制">

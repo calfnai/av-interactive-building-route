@@ -22,6 +22,10 @@ interface BuildingSceneProps {
   progress: number;
   currentEvent: RouteEvent;
   floorFocus: number | null;
+  floorSpread: number;
+  xray: number;
+  ghostRoute: Vec3[] | null;
+  ghostIntensity: number;
   cameraCommand: CameraCommand;
   commandVersion: number;
 }
@@ -63,6 +67,11 @@ function routePoseAt(progress: number) {
   }
 
   return { position, heading: flatMovement.normalize(), startIndex };
+}
+
+function explodePosition(position: THREE.Vector3, floorSpread: number) {
+  const floorCoordinate = position.y / FLOOR_HEIGHT + 1;
+  return position.clone().add(new THREE.Vector3(0, (floorCoordinate - 5.5) * floorSpread * 0.92, 0));
 }
 
 function applyChaseCamera(
@@ -191,6 +200,10 @@ export default function BuildingScene({
   progress,
   currentEvent,
   floorFocus,
+  floorSpread,
+  xray,
+  ghostRoute,
+  ghostIntensity,
   cameraCommand,
   commandVersion,
 }: BuildingSceneProps) {
@@ -200,6 +213,7 @@ export default function BuildingScene({
   const controlsRef = useRef<OrbitControls | null>(null);
   const markerRef = useRef<THREE.Group | null>(null);
   const routeRef = useRef<THREE.Line | null>(null);
+  const ghostRouteRef = useRef<THREE.Line | null>(null);
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
@@ -340,6 +354,13 @@ export default function BuildingScene({
     routeRef.current = route;
     scene.add(route);
 
+    const ghostRouteLine = makeLine([new THREE.Vector3(), new THREE.Vector3()], palette.locked, 0);
+    (ghostRouteLine.material as THREE.LineBasicMaterial).depthTest = false;
+    ghostRouteLine.renderOrder = 24;
+    ghostRouteLine.visible = false;
+    ghostRouteRef.current = ghostRouteLine;
+    scene.add(ghostRouteLine);
+
     const checkpoints = new THREE.Group();
     scene.add(checkpoints);
     ROUTE_EVENTS.forEach((item, index) => {
@@ -429,14 +450,15 @@ export default function BuildingScene({
     const route = routeRef.current;
     if (!marker || !route) return;
     const { position, heading, startIndex } = routePoseAt(progress);
+    const renderedPosition = explodePosition(position, floorSpread);
     if (heading) {
       characterHeadingRef.current.lerp(heading, 0.32).normalize();
     }
-    marker.position.copy(position);
+    marker.position.copy(renderedPosition);
     faceMarker(marker, characterHeadingRef.current);
     const geometry = new THREE.BufferGeometry().setFromPoints(
       ROUTE_EVENTS.slice(0, startIndex + 1)
-        .map((item) => toVector(item.position))
+        .map((item) => explodePosition(toVector(item.position), floorSpread))
         .concat([marker.position.clone()]),
     );
     route.geometry.dispose();
@@ -446,24 +468,46 @@ export default function BuildingScene({
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (cameraCommand === "chase" && camera && controls) {
-      applyChaseCamera(camera, controls, position, characterHeadingRef.current);
+      applyChaseCamera(camera, controls, renderedPosition, characterHeadingRef.current);
     }
-  }, [progress, cameraCommand]);
+  }, [progress, cameraCommand, floorSpread]);
 
   useEffect(() => {
     for (const [floor, group] of focusGroupsRef.current.entries()) {
       const active = floorFocus === null || floor === floorFocus;
       group.visible = floorFocus === null || Math.abs(floor - floorFocus) <= 1;
+      group.position.y = (floor - 5.5) * floorSpread * 0.92;
       group.traverse((object) => {
         const mesh = object as THREE.Mesh;
         const material = mesh.material as THREE.Material & { opacity?: number };
         if (material && "opacity" in material && typeof material.opacity === "number") {
+          const stored = material.userData.baseOpacity;
+          const baseOpacity = typeof stored === "number"
+            ? stored
+            : (mesh.userData.baseOpacity ?? material.opacity);
+          material.userData.baseOpacity = baseOpacity;
           material.transparent = true;
-          material.opacity = active ? (mesh.userData.baseOpacity ?? material.opacity) : 0.11;
+          material.opacity = active ? Math.max(0.08, baseOpacity * (1 - xray * 0.72)) : 0.08;
         }
       });
     }
-  }, [floorFocus]);
+  }, [floorFocus, floorSpread, xray]);
+
+  useEffect(() => {
+    const line = ghostRouteRef.current;
+    if (!line || !ghostRoute || ghostRoute.length < 2 || ghostIntensity <= 0.02) {
+      if (line) line.visible = false;
+      return;
+    }
+    line.visible = true;
+    line.geometry.dispose();
+    line.geometry = new THREE.BufferGeometry().setFromPoints(
+      ghostRoute.map((point) => explodePosition(toVector(point), floorSpread)),
+    );
+    const material = line.material as THREE.LineBasicMaterial;
+    material.opacity = 0.2 + ghostIntensity * 0.8;
+    material.transparent = true;
+  }, [ghostRoute, ghostIntensity, floorSpread]);
 
   useEffect(() => {
     const camera = cameraRef.current;
@@ -477,7 +521,7 @@ export default function BuildingScene({
       if (heading) characterHeadingRef.current.copy(heading);
       applyChaseCamera(camera, controls, position, characterHeadingRef.current, true);
     } else if (cameraCommand === "route") {
-      const target = toVector(currentEvent.position);
+      const target = explodePosition(toVector(currentEvent.position), floorSpread);
       camera.position.copy(target.clone().add(new THREE.Vector3(12, 8, 13)));
       controls.target.copy(target);
     } else {
@@ -485,7 +529,7 @@ export default function BuildingScene({
       controls.target.set(0, 10, 0);
     }
     controls.update();
-  }, [cameraCommand, commandVersion, currentEvent]);
+  }, [cameraCommand, commandVersion, currentEvent, floorSpread]);
 
   return <div className="scene-host" ref={hostRef} />;
 }

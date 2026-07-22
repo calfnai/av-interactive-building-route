@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BLOCKED_EVENTS,
   ROUTE_EVENTS,
+  GHOST_ROUTES,
   SPATIAL_CONNECTIONS,
   SPATIAL_NODES,
 } from "../src/spatial-data.ts";
@@ -22,6 +23,13 @@ test("hard barriers cannot be traversed", () => {
     BLOCKED_EVENTS.map((item) => item.id),
     ["f2-no-lift", "u1-f10-locked-stair", "bridge-f6-locked", "bridge-f7-locked"],
   );
+});
+
+test("every blocked event has a playable ghost route", () => {
+  assert.deepEqual(Object.keys(GHOST_ROUTES).sort(), BLOCKED_EVENTS.map((item) => item.id).sort());
+  for (const route of Object.values(GHOST_ROUTES)) {
+    assert.ok(route.length >= 3);
+  }
 });
 
 test("route retains every required detour and keyed finish", () => {

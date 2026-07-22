@@ -312,3 +312,30 @@ export const CHAPTERS = [
 ];
 
 export const BLOCKED_EVENTS = ROUTE_EVENTS.filter((item) => item.status === "blocked");
+
+export const GHOST_ROUTES: Record<string, Vec3[]> = {
+  "f2-no-lift": [
+    p(1, 2, -2.4, -2.25),
+    p(1, 3, -2.4, -2.25),
+    p(1, 4, -2.4, -2.25),
+    p(1, 5, -2.4, -2.25),
+    p(1, 6, -2.4, -2.25),
+  ],
+  "u1-f10-locked-stair": [
+    p(1, 10, -2.4, -2.25),
+    p(1, 9, -2.4, -2.25),
+    p(1, 8, -2.4, -2.25),
+    p(1, 7, -2.4, -2.25),
+    p(1, 6, -2.4, -2.25),
+  ],
+  "bridge-f6-locked": [
+    [0.7, yForFloor(6) + 0.38, 0],
+    [0, yForFloor(6) + 0.38, 0],
+    p(1, 6, 0, 0),
+  ],
+  "bridge-f7-locked": [
+    [0.7, yForFloor(7) + 0.38, 0],
+    [0, yForFloor(7) + 0.38, 0],
+    p(1, 7, 0, 0),
+  ],
+};

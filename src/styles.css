@@ -126,6 +126,224 @@ button {
   outline: none;
 }
 
+.hand-panel {
+  position: absolute;
+  z-index: 14;
+  top: 108px;
+  right: 18px;
+  width: 294px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(9, 15, 18, 0.9);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(20px);
+}
+
+.hand-panel.collapsed {
+  top: 100px;
+  width: auto;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.hand-panel-toggle {
+  position: absolute;
+  z-index: 2;
+  top: 9px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(8, 13, 15, 0.72);
+  color: #96a7ac;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.hand-panel.collapsed .hand-panel-toggle {
+  position: static;
+  padding: 9px 12px;
+  background: rgba(8, 13, 15, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #62737a;
+}
+
+.connection-dot.connected {
+  background: var(--lime);
+  box-shadow: 0 0 0 4px rgba(234, 250, 97, 0.09);
+}
+
+.connection-dot.loading,
+.connection-dot.waiting {
+  background: var(--orange);
+}
+
+.connection-dot.error {
+  background: var(--red);
+}
+
+.hand-preview {
+  position: relative;
+  height: 156px;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(96, 213, 200, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(96, 213, 200, 0.08) 1px, transparent 1px),
+    #10191d;
+  background-size: 26px 26px;
+}
+
+.hand-preview video,
+.hand-preview canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+.hand-preview canvas {
+  transform: none;
+}
+
+.hand-preview > span {
+  position: absolute;
+  z-index: 1;
+  bottom: 8px;
+  left: 9px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(5, 9, 11, 0.72);
+  color: #a8b9bd;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+}
+
+.preview-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: rgba(148, 176, 180, 0.34);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+}
+
+.hand-panel-copy {
+  padding: 15px 15px 11px;
+}
+
+.hand-panel-copy h2 {
+  margin: 5px 0 7px;
+  font-size: 17px;
+}
+
+.hand-panel-copy p {
+  min-height: 18px;
+  margin: 0;
+  color: #7c9096;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.hand-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 0 15px 12px;
+}
+
+.hand-actions button {
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #8fa1a6;
+  cursor: pointer;
+  font-size: 9px;
+}
+
+.hand-actions button.active {
+  border-color: rgba(234, 250, 97, 0.44);
+  background: rgba(234, 250, 97, 0.08);
+  color: var(--lime);
+}
+
+.hand-actions button.quiet {
+  grid-column: 1 / -1;
+  min-height: 27px;
+}
+
+.gesture-values {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.gesture-values span {
+  display: grid;
+  gap: 4px;
+  padding: 10px 5px;
+  color: #c6d3d5;
+  text-align: center;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+}
+
+.gesture-values span + span {
+  border-left: 1px solid var(--line);
+}
+
+.gesture-values b {
+  color: #667a80;
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.gesture-guide {
+  display: grid;
+  gap: 7px;
+  padding: 12px 15px 15px;
+}
+
+.gesture-guide span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #71858a;
+  font-size: 9px;
+}
+
+.gesture-guide i {
+  width: 18px;
+  height: 4px;
+  display: inline-block;
+  border-radius: 99px;
+  background: var(--teal);
+}
+
+.gesture-guide .pinch-icon { width: 7px; background: var(--lime); }
+.gesture-guide .palm-icon { width: 14px; background: var(--blue); }
+.gesture-guide .spread-icon { width: 18px; background: var(--violet); }
+.gesture-guide .ghost-icon { width: 18px; background: var(--red); }
+
 .scene-tools {
   position: absolute;
   z-index: 8;
@@ -325,6 +543,11 @@ button {
   background: rgba(10, 16, 19, 0.86);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.24);
   backdrop-filter: blur(18px);
+  transition: right 240ms ease;
+}
+
+.viewport.hand-control-open .event-card {
+  right: 330px;
 }
 
 .event-card.blocked {
@@ -538,7 +761,16 @@ button {
     gap: 10px;
     padding: 0 14px;
   }
-}
+
+  .hand-panel {
+    top: 96px;
+    right: 12px;
+  }
+
+  .viewport.hand-control-open .event-card {
+    right: 18px;
+    transform: translateY(calc(100% + 24px));
+  }
 
 @media (max-width: 620px) {
   .app-shell {
@@ -569,11 +801,25 @@ button {
     left: 10px;
   }
 
+  .hand-panel {
+    top: 54px;
+    right: 10px;
+    width: min(294px, calc(100vw - 20px));
+  }
+
+  .hand-panel.collapsed {
+    top: 52px;
+  }
+
   .event-card {
     right: 10px;
     bottom: 10px;
     width: calc(100vw - 20px);
     padding: 13px 14px;
+  }
+
+  .viewport.hand-control-open .event-card {
+    right: 10px;
   }
 
   .event-card h3 {
