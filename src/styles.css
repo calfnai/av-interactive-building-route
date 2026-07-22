@@ -132,7 +132,9 @@ button {
   top: 108px;
   right: 18px;
   width: 294px;
-  overflow: hidden;
+  max-height: calc(100% - 126px);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: rgba(9, 15, 18, 0.9);
@@ -292,7 +294,7 @@ button {
 
 .gesture-values {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
@@ -311,10 +313,46 @@ button {
   border-left: 1px solid var(--line);
 }
 
+.gesture-values span:nth-child(4) {
+  border-left: 0;
+}
+
+.gesture-values span:nth-child(n + 4) {
+  border-top: 1px solid var(--line);
+}
+
 .gesture-values b {
   color: #667a80;
   font-size: 8px;
   font-weight: 500;
+}
+
+.gesture-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 9px 15px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.gesture-command span {
+  color: #61747a;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+}
+
+.gesture-command b {
+  color: #8fa0a5;
+  text-align: right;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.gesture-command.active b {
+  color: var(--lime);
 }
 
 .gesture-guide {
@@ -343,6 +381,9 @@ button {
 .gesture-guide .palm-icon { width: 14px; background: var(--blue); }
 .gesture-guide .spread-icon { width: 18px; background: var(--violet); }
 .gesture-guide .ghost-icon { width: 18px; background: var(--red); }
+.gesture-guide .orbit-icon { width: 13px; background: var(--orange); }
+.gesture-guide .play-icon { width: 9px; background: var(--lime); }
+.gesture-guide .jump-icon { width: 16px; background: #f3f4f5; }
 
 .scene-tools {
   position: absolute;

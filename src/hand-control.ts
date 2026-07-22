@@ -14,8 +14,11 @@ export interface ControlHand {
   depth: number;
   pinch: number;
   openness: number;
+  gesture: string;
   landmarks: ControlLandmark[];
 }
+
+export type TimelineGestureCommand = "play" | "pause" | "beginning" | "ending";
 
 export interface HandControlFrame {
   source: "off" | "browser" | "desktop";
@@ -36,6 +39,7 @@ export const EMPTY_HAND: ControlHand = {
   depth: 0,
   pinch: 0,
   openness: 0,
+  gesture: "None",
   landmarks: [],
 };
 
@@ -67,4 +71,12 @@ export function smoothHand(previous: ControlHand, next: ControlHand): ControlHan
     pinch: mix(previous.pinch, next.pinch, 0.4),
     openness: mix(previous.openness, next.openness),
   };
+}
+
+export function gestureCommandFor(gesture: string): TimelineGestureCommand | null {
+  if (gesture === "Thumb_Up") return "play";
+  if (gesture === "Closed_Fist") return "pause";
+  if (gesture === "Pointing_Up") return "beginning";
+  if (gesture === "Victory") return "ending";
+  return null;
 }

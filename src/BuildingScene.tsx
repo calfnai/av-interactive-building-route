@@ -26,6 +26,8 @@ interface BuildingSceneProps {
   xray: number;
   ghostRoute: Vec3[] | null;
   ghostIntensity: number;
+  handOrbit: number | null;
+  handZoom: number | null;
   cameraCommand: CameraCommand;
   commandVersion: number;
 }
@@ -204,6 +206,8 @@ export default function BuildingScene({
   xray,
   ghostRoute,
   ghostIntensity,
+  handOrbit,
+  handZoom,
   cameraCommand,
   commandVersion,
 }: BuildingSceneProps) {
@@ -530,6 +534,22 @@ export default function BuildingScene({
     }
     controls.update();
   }, [cameraCommand, commandVersion, currentEvent, floorSpread]);
+
+  useEffect(() => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (handOrbit === null || handZoom === null || !camera || !controls) return;
+    const angle = THREE.MathUtils.lerp(-Math.PI * 0.72, Math.PI * 0.72, handOrbit);
+    const distance = THREE.MathUtils.lerp(46, 13, handZoom);
+    const target = controls.target;
+    const desired = new THREE.Vector3(
+      target.x + Math.sin(angle) * distance,
+      target.y + THREE.MathUtils.lerp(6, 18, 1 - handZoom),
+      target.z + Math.cos(angle) * distance,
+    );
+    camera.position.lerp(desired, 0.2);
+    controls.update();
+  }, [handOrbit, handZoom]);
 
   return <div className="scene-host" ref={hostRef} />;
 }

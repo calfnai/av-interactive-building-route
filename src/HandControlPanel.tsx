@@ -4,6 +4,7 @@ import type { HandControllerApi } from "./useHandController";
 interface HandControlPanelProps extends Pick<HandControllerApi, "videoRef" | "overlayRef" | "startBrowser" | "connectDesktop" | "stop"> {
   frame: HandControlFrame;
   collapsed: boolean;
+  lastCommand: string;
   onToggle: () => void;
 }
 
@@ -17,6 +18,7 @@ export default function HandControlPanel({
   connectDesktop,
   stop,
   collapsed,
+  lastCommand,
   onToggle,
 }: HandControlPanelProps) {
   const primary = frame.hands[frame.primaryHand];
@@ -46,15 +48,24 @@ export default function HandControlPanel({
           </div>
           <div className="gesture-values">
             <span><b>主手</b>{primary.tracked ? frame.primaryHand.toUpperCase() : "—"}</span>
+            <span><b>手势</b>{primary.tracked ? primary.gesture.replaceAll("_", " ") : "—"}</span>
             <span><b>捏合</b>{percent(primary.pinch)}</span>
             <span><b>张开</b>{percent(primary.openness)}</span>
             <span><b>双手距</b>{percent(frame.spread)}</span>
+            <span><b>距离</b>{percent(primary.depth)}</span>
+          </div>
+          <div className={`gesture-command ${lastCommand ? "active" : ""}`}>
+            <span>LAST COMMAND</span>
+            <b>{lastCommand || "等待手势命令"}</b>
           </div>
           <div className="gesture-guide">
             <span><i className="pinch-icon" />捏住后左右移动：拖动路线</span>
             <span><i className="palm-icon" />张开手掌上下移动：楼层剖切</span>
             <span><i className="spread-icon" />双手拉开：拆开楼层</span>
             <span><i className="ghost-icon" />阻隔点张开手：显示幽灵路线</span>
+            <span><i className="orbit-icon" />放松手左右/前后：旋转与缩放</span>
+            <span><i className="play-icon" />👍 播放 · ✊ 暂停</span>
+            <span><i className="jump-icon" />☝ 回到开头 · ✌ 跳到结尾</span>
           </div>
         </>
       )}

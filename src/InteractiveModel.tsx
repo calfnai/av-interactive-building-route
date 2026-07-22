@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import BuildingScene, { type CameraCommand } from "./BuildingScene";
 import HandControlPanel from "./HandControlPanel";
-import { clamp01 } from "./hand-control";
+import { clamp01, gestureCommandFor } from "./hand-control";
 import { BLOCKED_EVENTS, CHAPTERS, GHOST_ROUTES, ROUTE_EVENTS } from "./spatial-data";
 import { useHandController } from "./useHandController";
 
@@ -25,8 +25,10 @@ export default function InteractiveModel() {
   const [commandVersion, setCommandVersion] = useState(0);
   const [panelOpen, setPanelOpen] = useState(true);
   const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
+  const [lastHandCommand, setLastHandCommand] = useState("");
   const handController = useHandController();
   const pinchAnchorRef = useRef({ active: false, x: 0.5, progress: 0 });
+  const gestureLatchRef = useRef({ gesture: "None", at: 0 });
 
   const eventIndex = Math.min(ROUTE_EVENTS.length - 1, Math.round(progress * (ROUTE_EVENTS.length - 1)));
   const currentEvent = ROUTE_EVENTS[eventIndex];
@@ -43,6 +45,12 @@ export default function InteractiveModel() {
     : 0;
   const ghostRoute = GHOST_ROUTES[currentEvent.id] ?? null;
   const ghostIntensity = ghostRoute ? xray : 0;
+  const cameraHandActive = handActive
+    && !handController.frame.pinchActive
+    && primaryHand.openness < 0.5
+    && primaryHand.gesture === "None";
+  const handOrbit = cameraHandActive ? primaryHand.x : null;
+  const handZoom = cameraHandActive ? primaryHand.depth : null;
 
   useEffect(() => {
     const anchor = pinchAnchorRef.current;
@@ -59,6 +67,40 @@ export default function InteractiveModel() {
     }
     setProgress(clamp01(anchor.progress + (primaryHand.x - anchor.x) * 1.45));
   }, [handActive, handController.frame.pinchActive, primaryHand.x, progress]);
+
+  useEffect(() => {
+    if (!handActive) {
+      gestureLatchRef.current.gesture = "None";
+      return;
+    }
+    const gesture = primaryHand.gesture;
+    const latch = gestureLatchRef.current;
+    if (gesture === "None" || gesture === "Open_Palm") {
+      latch.gesture = gesture;
+      return;
+    }
+    const now = performance.now();
+    if (gesture === latch.gesture || now - latch.at < 850) return;
+    latch.gesture = gesture;
+    latch.at = now;
+    const command = gestureCommandFor(gesture);
+    if (command === "play") {
+      if (progress >= 1) setProgress(0);
+      setPlaying(true);
+      setLastHandCommand("👍 开始 / 继续播放");
+    } else if (command === "pause") {
+      setPlaying(false);
+      setLastHandCommand("✊ 暂停播放");
+    } else if (command === "beginning") {
+      setProgress(0);
+      setPlaying(false);
+      setLastHandCommand("☝ 回到路线开头");
+    } else if (command === "ending") {
+      setProgress(1);
+      setPlaying(false);
+      setLastHandCommand("✌ 跳到路线结尾");
+    }
+  }, [handActive, primaryHand.gesture, progress]);
 
   useEffect(() => {
     if (!playing) return;
@@ -128,6 +170,8 @@ export default function InteractiveModel() {
           xray={xray}
           ghostRoute={ghostRoute}
           ghostIntensity={ghostIntensity}
+          handOrbit={handOrbit}
+          handZoom={handZoom}
           cameraCommand={cameraCommand}
           commandVersion={commandVersion}
         />
@@ -140,6 +184,7 @@ export default function InteractiveModel() {
           connectDesktop={handController.connectDesktop}
           stop={handController.stop}
           collapsed={handPanelCollapsed}
+          lastCommand={lastHandCommand}
           onToggle={() => setHandPanelCollapsed((value) => !value)}
         />
 

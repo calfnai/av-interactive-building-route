@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clamp01, EMPTY_HAND, smoothHand } from "../src/hand-control.ts";
+import { clamp01, EMPTY_HAND, gestureCommandFor, smoothHand } from "../src/hand-control.ts";
 
 test("hand values stay in the normalized controller range", () => {
   assert.equal(clamp01(-0.2), 0);
@@ -20,4 +20,12 @@ test("continuous hand values are smoothed but tracking state is immediate", () =
   assert.equal(smoothed.tracked, true);
   assert.ok(smoothed.x > previous.x && smoothed.x < next.x);
   assert.ok(smoothed.y > previous.y && smoothed.y < next.y);
+});
+
+test("recognized gestures map to explicit timeline commands", () => {
+  assert.equal(gestureCommandFor("Thumb_Up"), "play");
+  assert.equal(gestureCommandFor("Closed_Fist"), "pause");
+  assert.equal(gestureCommandFor("Pointing_Up"), "beginning");
+  assert.equal(gestureCommandFor("Victory"), "ending");
+  assert.equal(gestureCommandFor("Open_Palm"), null);
 });

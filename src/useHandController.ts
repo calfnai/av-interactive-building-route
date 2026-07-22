@@ -25,7 +25,7 @@ const CONNECTIONS: ReadonlyArray<readonly [number, number]> = [
 const distance = (a: NormalizedLandmark, b: NormalizedLandmark) =>
   Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 
-function interpretHand(points: NormalizedLandmark[], confidence: number): ControlHand {
+function interpretHand(points: NormalizedLandmark[], confidence: number, gesture: string): ControlHand {
   const palmIndexes = [0, 5, 9, 13, 17];
   const palmX = palmIndexes.reduce((sum, index) => sum + points[index].x, 0) / palmIndexes.length;
   const palmY = palmIndexes.reduce((sum, index) => sum + points[index].y, 0) / palmIndexes.length;
@@ -41,6 +41,7 @@ function interpretHand(points: NormalizedLandmark[], confidence: number): Contro
     depth: clamp01((palmWidth - 0.055) / 0.2),
     pinch: clamp01(1 - pinchDistance / (palmWidth * 0.78)),
     openness: clamp01((extension - 1.15) / 1.55),
+    gesture,
     landmarks: points.map((point) => ({ x: 1 - point.x, y: point.y, z: point.z })),
   };
 }
@@ -82,6 +83,11 @@ function desktopFrame(payload: Record<string, unknown>, previous: HandControlFra
       depth: Number(source.depth ?? 0),
       pinch: Number(source.pinch ?? 0),
       openness: Number(source.openness ?? 0),
+      gesture: typeof source.gesture === "string"
+        ? source.gesture
+        : Number(source.openness ?? 0) < 0.2
+          ? "Closed_Fist"
+          : "None",
       landmarks: source.landmarks ?? [],
     };
   };
@@ -190,7 +196,8 @@ export function useHandController(): HandControllerApi {
         result.landmarks.forEach((points, index) => {
           const category = result.handedness[index]?.[0];
           const name = category?.categoryName.toLowerCase() === "left" ? "left" : "right";
-          raw[name] = interpretHand(points, category?.score ?? 0);
+          const gesture = result.gestures[index]?.[0]?.categoryName ?? "None";
+          raw[name] = interpretHand(points, category?.score ?? 0, gesture);
         });
         const previous = frameRef.current;
         const left = smoothHand(previous.hands.left, raw.left);
