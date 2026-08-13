@@ -1,0 +1,187 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export interface AudioBands {
+  subBass: number;
+  bass: number;
+  lowMid: number;
+  mid: number;
+  high: number;
+  activity: number;
+}
+
+export type AudioSource = "SAMPLE" | "MICROPHONE";
+
+export interface WallReactionState {
+  displacement: number;
+  colorShift: number;
+  lineDensity: number;
+  bloom: number;
+  particleEmission: number;
+}
+
+export interface AudioBandState {
+  bands: AudioBands;
+  source: AudioSource;
+  error: string | null;
+  startMicrophone: () => Promise<void>;
+  useSample: () => void;
+}
+
+export const EMPTY_AUDIO_BANDS: AudioBands = {
+  subBass: 0,
+  bass: 0,
+  lowMid: 0,
+  mid: 0,
+  high: 0,
+  activity: 0,
+};
+
+const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+export function sampleBands(time: number): AudioBands {
+  const kick = Math.pow(Math.max(0, Math.sin(time * 2.15)), 12);
+  const bassPulse = Math.sin(time * 3.4) * 0.5 + 0.5;
+  const midPulse = Math.sin(time * 5.7 + 1.1) * 0.5 + 0.5;
+  const highPulse = Math.sin(time * 12.8 + 0.4) * 0.5 + 0.5;
+  const subBass = clamp01(0.14 + kick * 0.8);
+  const bass = clamp01(0.18 + bassPulse * 0.34 + kick * 0.24);
+  const lowMid = clamp01(0.16 + midPulse * 0.38);
+  const mid = clamp01(0.12 + (Math.sin(time * 8.2) * 0.5 + 0.5) * 0.42);
+  const high = clamp01(0.08 + highPulse * 0.52);
+
+  return {
+    subBass,
+    bass,
+    lowMid,
+    mid,
+    high,
+    activity: clamp01(subBass * 0.24 + bass * 0.2 + lowMid * 0.2 + mid * 0.2 + high * 0.16),
+  };
+}
+
+export function bandsToWallReaction(bands: AudioBands, eventBoost = 0): WallReactionState {
+  return {
+    displacement: clamp01(bands.subBass * 0.62 + bands.bass * 0.38 + eventBoost * 0.18),
+    colorShift: clamp01(bands.lowMid * 0.58 + bands.mid * 0.42),
+    lineDensity: clamp01(bands.lowMid * 0.44 + bands.mid * 0.56),
+    bloom: clamp01(bands.bass * 0.28 + bands.high * 0.22 + bands.activity * 0.5 + eventBoost * 0.24),
+    particleEmission: clamp01(bands.high * 0.72 + bands.activity * 0.28),
+  };
+}
+
+function averageFrequencyBand(
+  data: Uint8Array,
+  sampleRate: number,
+  fftSize: number,
+  lowerHz: number,
+  upperHz: number,
+) {
+  const binHz = sampleRate / fftSize;
+  const start = Math.max(0, Math.floor(lowerHz / binHz));
+  const end = Math.min(data.length - 1, Math.ceil(upperHz / binHz));
+  if (end < start) return 0;
+
+  let total = 0;
+  for (let index = start; index <= end; index += 1) total += data[index];
+  return clamp01((total / (end - start + 1) / 255) * 1.55);
+}
+
+function readMicrophoneBands(analyser: AnalyserNode, context: AudioContext, data: Uint8Array<ArrayBuffer>): AudioBands {
+  analyser.getByteFrequencyData(data);
+  const subBass = averageFrequencyBand(data, context.sampleRate, analyser.fftSize, 20, 70);
+  const bass = averageFrequencyBand(data, context.sampleRate, analyser.fftSize, 70, 180);
+  const lowMid = averageFrequencyBand(data, context.sampleRate, analyser.fftSize, 180, 420);
+  const mid = averageFrequencyBand(data, context.sampleRate, analyser.fftSize, 420, 2000);
+  const high = averageFrequencyBand(data, context.sampleRate, analyser.fftSize, 2000, 9000);
+
+  return {
+    subBass,
+    bass,
+    lowMid,
+    mid,
+    high,
+    activity: clamp01(subBass * 0.22 + bass * 0.2 + lowMid * 0.2 + mid * 0.2 + high * 0.18),
+  };
+}
+
+export function useAudioBands(): AudioBandState {
+  const [bands, setBands] = useState<AudioBands>(EMPTY_AUDIO_BANDS);
+  const [source, setSource] = useState<AudioSource>("SAMPLE");
+  const [error, setError] = useState<string | null>(null);
+  const sourceRef = useRef<AudioSource>("SAMPLE");
+  const contextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const useSample = useCallback(() => {
+    sourceNodeRef.current?.disconnect();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    analyserRef.current?.disconnect();
+    sourceNodeRef.current = null;
+    streamRef.current = null;
+    analyserRef.current = null;
+    sourceRef.current = "SAMPLE";
+    setSource("SAMPLE");
+    setError(null);
+  }, []);
+
+  const startMicrophone = useCallback(async () => {
+    if (sourceRef.current === "MICROPHONE") return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      useSample();
+      setError("当前浏览器不支持麦克风，已回退 SAMPLE。");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioContextConstructor = window.AudioContext
+        ?? (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) throw new Error("AudioContext unavailable");
+
+      const context = contextRef.current ?? new AudioContextConstructor();
+      await context.resume();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.78;
+      const sourceNode = context.createMediaStreamSource(stream);
+      sourceNode.connect(analyser);
+      contextRef.current = context;
+      streamRef.current = stream;
+      sourceNodeRef.current = sourceNode;
+      analyserRef.current = analyser;
+      sourceRef.current = "MICROPHONE";
+      setSource("MICROPHONE");
+      setError(null);
+    } catch {
+      useSample();
+      setError("麦克风不可用，已自动回退 SAMPLE。");
+    }
+  }, [useSample]);
+
+  useEffect(() => {
+    let frame = 0;
+    let lastEmit = 0;
+    const microphoneData = new Uint8Array(new ArrayBuffer(512));
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      if (now - lastEmit < 33) return;
+      lastEmit = now;
+      const analyser = analyserRef.current;
+      const context = contextRef.current;
+      setBands(analyser && context ? readMicrophoneBands(analyser, context, microphoneData) : sampleBands(now / 1000));
+    };
+    frame = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      sourceNodeRef.current?.disconnect();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      analyserRef.current?.disconnect();
+      void contextRef.current?.close();
+    };
+  }, []);
+
+  return { bands, source, error, startMicrophone, useSample };
+}

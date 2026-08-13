@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { bandsToWallReaction, useAudioBands } from "./audio-bands";
 import BuildingScene, { type CameraCommand } from "./BuildingScene";
 import HandControlPanel from "./HandControlPanel";
+import SoundControlPanel from "./SoundControlPanel";
 import { clamp01, gestureCommandFor } from "./hand-control";
 import { BLOCKED_EVENTS, CHAPTERS, GHOST_ROUTES, ROUTE_EVENTS } from "./spatial-data";
 import { useHandController } from "./useHandController";
@@ -27,12 +29,14 @@ export default function InteractiveModel() {
   const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
   const [lastHandCommand, setLastHandCommand] = useState("");
   const handController = useHandController();
+  const audio = useAudioBands();
   const pinchAnchorRef = useRef({ active: false, x: 0.5, progress: 0 });
   const gestureLatchRef = useRef({ gesture: "None", at: 0 });
 
   const eventIndex = Math.min(ROUTE_EVENTS.length - 1, Math.round(progress * (ROUTE_EVENTS.length - 1)));
   const currentEvent = ROUTE_EVENTS[eventIndex];
   const activeChapter = currentEvent.chapter;
+  const wallReaction = bandsToWallReaction(audio.bands, currentEvent.status === "blocked" ? 0.75 : currentEvent.status === "finish" ? 0.4 : 0);
   const primaryHand = handController.frame.hands[handController.frame.primaryHand];
   const handActive = handController.frame.status === "connected" && primaryHand.tracked;
   const gestureFloor = handActive && primaryHand.openness > 0.52
@@ -139,16 +143,18 @@ export default function InteractiveModel() {
   };
 
   const setCamera = (command: CameraCommand) => {
+    if (command === "walk" && progress >= 1) setProgress(0);
     setCameraCommand(command);
     setCommandVersion((value) => value + 1);
+    if (command === "walk") setPlaying(true);
   };
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand-block">
-          <span className="eyebrow">AV / INTERACTIVE SPATIAL STUDY 01</span>
-          <h1>楼栋路径复刻器</h1>
+          <span className="eyebrow">RANGE ECHO / STAIRS SOUND WALL</span>
+          <h1>楼梯声音共振器</h1>
         </div>
         <div className="top-metrics" aria-label="模型统计">
           <span><b>02</b> 单元</span>
@@ -174,6 +180,7 @@ export default function InteractiveModel() {
           handZoom={handZoom}
           cameraCommand={cameraCommand}
           commandVersion={commandVersion}
+          wallReaction={wallReaction}
         />
 
         <HandControlPanel
@@ -188,10 +195,13 @@ export default function InteractiveModel() {
           onToggle={() => setHandPanelCollapsed((value) => !value)}
         />
 
+        <SoundControlPanel {...audio} />
+
         <div className="scene-tools" aria-label="三维视角控制">
           <button className={cameraCommand === "overview" ? "active" : ""} onClick={() => setCamera("overview")}>全楼</button>
           <button className={cameraCommand === "route" ? "active" : ""} onClick={() => setCamera("route")}>跟随</button>
           <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
+          <button className={cameraCommand === "walk" ? "active" : ""} onClick={() => setCamera("walk")}>第一人称</button>
           <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
           <select
             value={floorFocus ?? "all"}

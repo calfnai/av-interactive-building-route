@@ -15,8 +15,9 @@ import {
   type RouteEvent,
   type Vec3,
 } from "./spatial-data";
+import type { WallReactionState } from "./audio-bands";
 
-export type CameraCommand = "overview" | "route" | "chase" | "top";
+export type CameraCommand = "overview" | "route" | "chase" | "walk" | "top";
 
 interface BuildingSceneProps {
   progress: number;
@@ -30,6 +31,7 @@ interface BuildingSceneProps {
   handZoom: number | null;
   cameraCommand: CameraCommand;
   commandVersion: number;
+  wallReaction: WallReactionState;
 }
 
 const palette = {
@@ -99,6 +101,25 @@ function applyChaseCamera(
     controls.target.copy(lookAt);
   } else {
     camera.position.lerp(cameraPosition, 0.18);
+    controls.target.lerp(lookAt, 0.24);
+  }
+  controls.update();
+}
+
+function applyWalkCamera(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  position: THREE.Vector3,
+  heading: THREE.Vector3,
+  immediate = false,
+) {
+  const eye = position.clone().add(new THREE.Vector3(0, 1.5, 0));
+  const lookAt = eye.clone().add(heading.clone().multiplyScalar(2.8)).add(new THREE.Vector3(0, 0.2, 0));
+  if (immediate) {
+    camera.position.copy(eye);
+    controls.target.copy(lookAt);
+  } else {
+    camera.position.lerp(eye, 0.2);
     controls.target.lerp(lookAt, 0.24);
   }
   controls.update();
@@ -198,6 +219,89 @@ function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
   addBox(group, [1.34, FLOOR_HEIGHT, 0.08], [base[0], base[1] + FLOOR_HEIGHT * 0.5, base[2] + direction * 1.04], palette.stair, 0.22);
 }
 
+interface ResonanceSurface {
+  panelMaterial: THREE.ShaderMaterial;
+  stripMaterials: THREE.MeshStandardMaterial[];
+  particleMaterial: THREE.PointsMaterial;
+}
+
+function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSurface {
+  const group = new THREE.Group();
+  group.position.set(...position);
+
+  addBox(group, [1.04, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
+  const panelMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uDisplacement: { value: 0 },
+      uColorShift: { value: 0 },
+      uLineDensity: { value: 0 },
+      uBloom: { value: 0 },
+    },
+    vertexShader: `
+      uniform float uTime;
+      uniform float uDisplacement;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        vec3 transformed = position;
+        float wave = sin(position.y * 15.0 + uTime * 1.8) * cos(position.x * 18.0 + uTime * 0.7);
+        transformed.z += wave * uDisplacement * 0.045;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uColorShift;
+      uniform float uLineDensity;
+      uniform float uBloom;
+      varying vec2 vUv;
+      void main() {
+        vec3 cool = vec3(0.08, 0.48, 0.52);
+        vec3 warm = vec3(0.86, 0.91, 0.28);
+        vec3 base = mix(cool, warm, uColorShift);
+        float channels = smoothstep(0.56, 0.92, sin((vUv.x * 42.0 + vUv.y * 5.0) * 3.14159) * 0.5 + 0.5);
+        float glow = 0.2 + uBloom * 0.72 + channels * uLineDensity * 0.75;
+        gl_FragColor = vec4(base * glow, 0.72 + uBloom * 0.24);
+      }
+    `,
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.1, 18, 36), panelMaterial);
+  panel.position.z = 0.01;
+  group.add(panel);
+
+  const stripMaterials: THREE.MeshStandardMaterial[] = [];
+  for (let index = 0; index < 7; index += 1) {
+    const strip = addBox(group, [0.025, 1.88, 0.035], [-0.34 + index * 0.115, 0, 0.075], 0x6de0d0, 0.34);
+    stripMaterials.push(strip.material as THREE.MeshStandardMaterial);
+  }
+
+  const particlePositions = new Float32Array(160 * 3);
+  for (let index = 0; index < 160; index += 1) {
+    const seed = index * 17.731;
+    particlePositions[index * 3] = ((Math.sin(seed) * 0.5 + 0.5) - 0.5) * 0.84;
+    particlePositions[index * 3 + 1] = ((Math.sin(seed * 1.7) * 0.5 + 0.5) - 0.5) * 1.98;
+    particlePositions[index * 3 + 2] = 0.12 + (Math.sin(seed * 2.3) * 0.5 + 0.5) * 0.06;
+  }
+  const particleGeometry = new THREE.BufferGeometry();
+  particleGeometry.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3));
+  const particleMaterial = new THREE.PointsMaterial({
+    color: 0xf2ff63,
+    size: 0.034,
+    transparent: true,
+    opacity: 0.14,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  group.add(new THREE.Points(particleGeometry, particleMaterial));
+  group.add(createTextSprite("RESONANCE", "#dffb8a", 0.42));
+  group.children[group.children.length - 1].position.set(0, 1.3, 0.08);
+  scene.add(group);
+  return { panelMaterial, stripMaterials, particleMaterial };
+}
+
 export default function BuildingScene({
   progress,
   currentEvent,
@@ -210,6 +314,7 @@ export default function BuildingScene({
   handZoom,
   cameraCommand,
   commandVersion,
+  wallReaction,
 }: BuildingSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [rendererError, setRendererError] = useState(false);
@@ -219,6 +324,7 @@ export default function BuildingScene({
   const markerRef = useRef<THREE.Group | null>(null);
   const routeRef = useRef<THREE.Line | null>(null);
   const ghostRouteRef = useRef<THREE.Line | null>(null);
+  const resonanceSurfacesRef = useRef<ResonanceSurface[]>([]);
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
@@ -346,6 +452,10 @@ export default function BuildingScene({
     grid.position.y = -0.15;
     scene.add(grid);
 
+    resonanceSurfacesRef.current = [3, 6, 8, 10].map((floor) =>
+      createResonanceSurface(scene, [0, yForFloor(floor) + 1.2, -1.15]),
+    );
+
     const nodeById = new Map(SPATIAL_NODES.map((node) => [node.id, node]));
     const graphGroup = new THREE.Group();
     scene.add(graphGroup);
@@ -437,6 +547,9 @@ export default function BuildingScene({
       const t = clock.getElapsedTime();
       halo.rotation.z = t * 0.65;
       body.scale.setScalar(1 + Math.sin(t * 4) * 0.035);
+      resonanceSurfacesRef.current.forEach((surface) => {
+        surface.panelMaterial.uniforms.uTime.value = t;
+      });
       controls.update();
       renderer.render(scene, camera);
     };
@@ -455,8 +568,25 @@ export default function BuildingScene({
         else mesh.material?.dispose?.();
       });
       focusGroupsRef.current.clear();
+      resonanceSurfacesRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    resonanceSurfacesRef.current.forEach((surface) => {
+      surface.panelMaterial.uniforms.uDisplacement.value = wallReaction.displacement;
+      surface.panelMaterial.uniforms.uColorShift.value = wallReaction.colorShift;
+      surface.panelMaterial.uniforms.uLineDensity.value = wallReaction.lineDensity;
+      surface.panelMaterial.uniforms.uBloom.value = wallReaction.bloom;
+      surface.stripMaterials.forEach((material, index) => {
+        material.emissive.setHSL(0.48 - wallReaction.colorShift * 0.14 + index * 0.005, 0.72, 0.34);
+        material.emissiveIntensity = 0.3 + wallReaction.bloom * 2.2;
+        material.opacity = 0.18 + wallReaction.lineDensity * 0.62;
+      });
+      surface.particleMaterial.opacity = 0.06 + wallReaction.particleEmission * 0.82;
+      surface.particleMaterial.size = 0.022 + wallReaction.particleEmission * 0.045;
+    });
+  }, [wallReaction]);
 
   useEffect(() => {
     const marker = markerRef.current;
@@ -482,6 +612,8 @@ export default function BuildingScene({
     const controls = controlsRef.current;
     if (cameraCommand === "chase" && camera && controls) {
       applyChaseCamera(camera, controls, renderedPosition, characterHeadingRef.current);
+    } else if (cameraCommand === "walk" && camera && controls) {
+      applyWalkCamera(camera, controls, renderedPosition, characterHeadingRef.current);
     }
   }, [progress, cameraCommand, floorSpread]);
 
@@ -527,17 +659,31 @@ export default function BuildingScene({
     const controls = controlsRef.current;
     if (!camera || !controls) return;
     if (cameraCommand === "top") {
+      controls.minDistance = 12;
+      controls.maxDistance = 72;
       camera.position.set(0, 52, 0.1);
       controls.target.set(0, 10, 0);
     } else if (cameraCommand === "chase") {
+      controls.minDistance = 12;
+      controls.maxDistance = 72;
       const { position, heading } = routePoseAt(progress);
       if (heading) characterHeadingRef.current.copy(heading);
       applyChaseCamera(camera, controls, position, characterHeadingRef.current, true);
+    } else if (cameraCommand === "walk") {
+      controls.minDistance = 0.2;
+      controls.maxDistance = 4;
+      const { position, heading } = routePoseAt(progress);
+      if (heading) characterHeadingRef.current.copy(heading);
+      applyWalkCamera(camera, controls, explodePosition(position, floorSpread), characterHeadingRef.current, true);
     } else if (cameraCommand === "route") {
+      controls.minDistance = 12;
+      controls.maxDistance = 72;
       const target = explodePosition(toVector(currentEvent.position), floorSpread);
       camera.position.copy(target.clone().add(new THREE.Vector3(12, 8, 13)));
       controls.target.copy(target);
     } else {
+      controls.minDistance = 12;
+      controls.maxDistance = 72;
       camera.position.set(32, 27, 36);
       controls.target.set(0, 10, 0);
     }
