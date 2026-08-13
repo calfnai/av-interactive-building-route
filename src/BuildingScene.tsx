@@ -223,6 +223,8 @@ interface ResonanceSurface {
   panelMaterial: THREE.ShaderMaterial;
   stripMaterials: THREE.MeshStandardMaterial[];
   particleMaterial: THREE.PointsMaterial;
+  rippleMeshes: THREE.Mesh[];
+  rippleMaterials: THREE.MeshBasicMaterial[];
 }
 
 function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSurface {
@@ -238,7 +240,7 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
       uLineDensity: { value: 0 },
       uBloom: { value: 0 },
     },
-    vertexShader: `
+      vertexShader: `
       uniform float uTime;
       uniform float uDisplacement;
       varying vec2 vUv;
@@ -246,7 +248,7 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
         vUv = uv;
         vec3 transformed = position;
         float wave = sin(position.y * 15.0 + uTime * 1.8) * cos(position.x * 18.0 + uTime * 0.7);
-        transformed.z += wave * uDisplacement * 0.045;
+        transformed.z += wave * uDisplacement * 0.12;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
       }
     `,
@@ -260,8 +262,8 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
         vec3 warm = vec3(0.86, 0.91, 0.28);
         vec3 base = mix(cool, warm, uColorShift);
         float channels = smoothstep(0.56, 0.92, sin((vUv.x * 42.0 + vUv.y * 5.0) * 3.14159) * 0.5 + 0.5);
-        float glow = 0.2 + uBloom * 0.72 + channels * uLineDensity * 0.75;
-        gl_FragColor = vec4(base * glow, 0.72 + uBloom * 0.24);
+        float glow = 0.28 + uBloom * 1.12 + channels * uLineDensity * 0.95;
+        gl_FragColor = vec4(base * glow, 0.78 + uBloom * 0.2);
       }
     `,
     transparent: true,
@@ -276,6 +278,25 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
   for (let index = 0; index < 7; index += 1) {
     const strip = addBox(group, [0.025, 1.88, 0.035], [-0.34 + index * 0.115, 0, 0.075], 0x6de0d0, 0.34);
     stripMaterials.push(strip.material as THREE.MeshStandardMaterial);
+  }
+
+  const rippleMeshes: THREE.Mesh[] = [];
+  const rippleMaterials: THREE.MeshBasicMaterial[] = [];
+  for (let index = 0; index < 3; index += 1) {
+    const rippleMaterial = new THREE.MeshBasicMaterial({
+      color: 0xeafa61,
+      transparent: true,
+      opacity: 0.12,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const ripple = new THREE.Mesh(new THREE.RingGeometry(0.12, 0.165, 48), rippleMaterial);
+    ripple.position.set(0, 0.15, 0.12);
+    ripple.scale.setScalar(0.55 + index * 0.2);
+    group.add(ripple);
+    rippleMeshes.push(ripple);
+    rippleMaterials.push(rippleMaterial);
   }
 
   const particlePositions = new Float32Array(160 * 3);
@@ -299,7 +320,7 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
   group.add(createTextSprite("RESONANCE", "#dffb8a", 0.42));
   group.children[group.children.length - 1].position.set(0, 1.3, 0.08);
   scene.add(group);
-  return { panelMaterial, stripMaterials, particleMaterial };
+  return { panelMaterial, stripMaterials, particleMaterial, rippleMeshes, rippleMaterials };
 }
 
 export default function BuildingScene({
@@ -452,9 +473,10 @@ export default function BuildingScene({
     grid.position.y = -0.15;
     scene.add(grid);
 
-    resonanceSurfacesRef.current = [3, 6, 8, 10].map((floor) =>
-      createResonanceSurface(scene, [0, yForFloor(floor) + 1.2, -1.15]),
-    );
+    resonanceSurfacesRef.current = [
+      createResonanceSurface(scene, [unitX(1) - 1.2, yForFloor(1) + 1.2, -3.3]),
+      ...[3, 6, 8, 10].map((floor) => createResonanceSurface(scene, [0, yForFloor(floor) + 1.2, -1.15])),
+    ];
 
     const nodeById = new Map(SPATIAL_NODES.map((node) => [node.id, node]));
     const graphGroup = new THREE.Group();
@@ -585,6 +607,12 @@ export default function BuildingScene({
       });
       surface.particleMaterial.opacity = 0.06 + wallReaction.particleEmission * 0.82;
       surface.particleMaterial.size = 0.022 + wallReaction.particleEmission * 0.045;
+      surface.rippleMeshes.forEach((ripple, index) => {
+        const pulse = wallReaction.displacement * (1 + index * 0.24) + wallReaction.bloom * 0.42;
+        ripple.scale.setScalar(0.5 + index * 0.22 + pulse * 1.35);
+        surface.rippleMaterials[index].opacity = 0.12 + wallReaction.bloom * (0.38 - index * 0.06);
+        surface.rippleMaterials[index].color.setHSL(0.16 - wallReaction.colorShift * 0.08, 0.86, 0.58);
+      });
     });
   }, [wallReaction]);
 

@@ -20,10 +20,10 @@ const statusLabel = {
 
 export default function InteractiveModel() {
   const [progress, setProgress] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [floorFocus, setFloorFocus] = useState<number | null>(null);
-  const [cameraCommand, setCameraCommand] = useState<CameraCommand>("overview");
+  const [cameraCommand, setCameraCommand] = useState<CameraCommand>("walk");
   const [commandVersion, setCommandVersion] = useState(0);
   const [panelOpen, setPanelOpen] = useState(true);
   const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
