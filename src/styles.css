@@ -126,6 +126,51 @@ button {
   outline: none;
 }
 
+.scene-host-fallback {
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(96, 213, 200, 0.14), transparent 30%),
+    linear-gradient(145deg, rgba(18, 31, 36, 0.96), rgba(8, 13, 16, 0.98));
+}
+
+.scene-fallback {
+  width: min(470px, calc(100% - 32px));
+  padding: 28px 30px;
+  border: 1px solid rgba(234, 250, 97, 0.34);
+  border-radius: 14px;
+  background: rgba(9, 15, 18, 0.86);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  text-align: center;
+}
+
+.scene-fallback h2 {
+  margin: 10px 0 12px;
+  color: var(--ink);
+  font-size: 21px;
+}
+
+.scene-fallback p,
+.scene-fallback small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.scene-fallback code {
+  display: block;
+  margin: 16px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--lime);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 .hand-panel {
   position: absolute;
   z-index: 14;

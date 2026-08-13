@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
@@ -212,6 +212,7 @@ export default function BuildingScene({
   commandVersion,
 }: BuildingSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const [rendererError, setRendererError] = useState(false);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
@@ -234,7 +235,15 @@ export default function BuildingScene({
     camera.position.set(32, 27, 36);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    } catch (error) {
+      console.warn("3D preview unavailable because this browser could not create a WebGL context.", error);
+      setRendererError(true);
+      return;
+    }
+    setRendererError(false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(host.clientWidth, host.clientHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -551,5 +560,17 @@ export default function BuildingScene({
     controls.update();
   }, [handOrbit, handZoom]);
 
-  return <div className="scene-host" ref={hostRef} />;
+  return (
+    <div className={`scene-host${rendererError ? " scene-host-fallback" : ""}`} ref={hostRef}>
+      {rendererError && (
+        <div className="scene-fallback" role="status">
+          <span className="eyebrow">WEBGL PREVIEW UNAVAILABLE</span>
+          <h2>当前浏览器无法创建 3D 画布</h2>
+          <p>内置预览环境禁用了 WebGL。请复制本页地址，在系统 Safari 或 Chrome 中打开：</p>
+          <code>{window.location.href}</code>
+          <small>左侧路线、底部播放和事件控制仍可使用；三维楼栋需要系统浏览器渲染。</small>
+        </div>
+      )}
+    </div>
+  );
 }
