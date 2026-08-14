@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bandsToWallReaction, FLOOR_AV_REACTIONS, floorAVReactionFor, useAudioBands } from "./audio-bands";
+import { bandsToWallReaction, floorAVReactionFor, useAudioBands } from "./audio-bands";
 import BuildingScene, { type CameraCommand } from "./BuildingScene";
 import HandControlPanel from "./HandControlPanel";
 import SoundControlPanel from "./SoundControlPanel";
@@ -206,16 +206,6 @@ export default function InteractiveModel() {
           <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
           <button className={cameraCommand === "walk" ? "active" : ""} onClick={() => setCamera("walk")}>第一人称</button>
           <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
-          <select
-            className="walk-floor-select"
-            value={walkFloor}
-            onChange={(event) => setWalkFloor(Number(event.target.value))}
-            aria-label="WASD体验楼层"
-          >
-            {FLOOR_AV_REACTIONS.map((reaction) => (
-              <option key={reaction.floor} value={reaction.floor}>{reaction.floor}F · {reaction.label.split(" / ")[0]}</option>
-            ))}
-          </select>
           <select
             value={floorFocus ?? "all"}
             onChange={(event) => setFloorFocus(event.target.value === "all" ? null : Number(event.target.value))}

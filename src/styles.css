@@ -159,6 +159,33 @@ button {
   line-height: 1.7;
 }
 
+.walk-status {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: 108px;
+  display: grid;
+  gap: 5px;
+  width: min(390px, calc(100% - 32px));
+  padding: 10px 14px;
+  border: 1px solid rgba(242, 255, 99, 0.28);
+  border-radius: 9px;
+  background: rgba(7, 13, 16, 0.78);
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+}
+
+.walk-status b {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
 .scene-fallback code {
   display: block;
   margin: 16px 0;

@@ -41,7 +41,7 @@ export default function SoundControlPanel({ bands, source, error, startMicrophon
       </div>
       <div className="sound-activity"><span>ACTIVITY</span><b>{Math.round(bands.activity * 100)}%</b></div>
       <div className="floor-reaction-label">{reaction.label}</div>
-      <p className="walk-hint">WASD 行走 · 拖动鼠标转头 · 数字键切换楼层</p>
+      <p className="walk-hint">WASD 行走 · 鼠标转头 · 楼梯 W/S · 电梯 E</p>
       {error && <p className="sound-error" role="status">{error}</p>}
     </section>
   );

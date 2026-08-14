@@ -134,6 +134,27 @@ interface PlayerState {
   floor: number;
 }
 
+type NavigationMode =
+  | "walking"
+  | "stairs"
+  | "elevator-opening"
+  | "elevator-open"
+  | "elevator-inside"
+  | "elevator-riding"
+  | "elevator-arrived";
+
+interface NavigationState {
+  mode: NavigationMode;
+  floor: number;
+  transitionStarted: number;
+  transitionFromY: number;
+  transitionToY: number;
+  transitionTargetFloor: number;
+  transitionArcDirection: number;
+  elevatorUnit: 1 | 2;
+  elevatorTargetFloor: number;
+}
+
 function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerState) {
   const eye = player.position.clone().add(new THREE.Vector3(0, 1.5, 0));
   const direction = new THREE.Vector3(
@@ -158,6 +179,24 @@ function updateKeyboardPlayer(player: PlayerState, keys: Set<string>, delta: num
   movement.normalize().multiplyScalar(Math.min(delta, 0.05) * 3.6);
   player.position.x = THREE.MathUtils.clamp(player.position.x + movement.x, -12.4, 12.4);
   player.position.z = THREE.MathUtils.clamp(player.position.z + movement.z, -5.2, 5.2);
+}
+
+function nearestSpatialNode(
+  position: THREE.Vector3,
+  kind: "stair" | "elevatorHall" | "elevatorCabin",
+  floor: number,
+) {
+  let nearest: (typeof SPATIAL_NODES)[number] | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const node of SPATIAL_NODES) {
+    if (node.kind !== kind || node.floor !== floor) continue;
+    const distance = Math.hypot(node.position[0] - position.x, node.position[2] - position.z);
+    if (distance < nearestDistance) {
+      nearest = node;
+      nearestDistance = distance;
+    }
+  }
+  return nearestDistance < 1.85 ? nearest : null;
 }
 
 function faceMarker(marker: THREE.Group, heading: THREE.Vector3) {
@@ -235,6 +274,7 @@ function addFlatDoor(
     sprite.position.set(position[0], position[1] + 0.82, position[2] + 0.06);
     group.add(sprite);
   }
+  return door;
 }
 
 function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
@@ -393,8 +433,8 @@ export default function BuildingScene({
   const routeRef = useRef<THREE.Line | null>(null);
   const ghostRouteRef = useRef<THREE.Line | null>(null);
   const resonanceSurfacesRef = useRef<ResonanceSurface[]>([]);
+  const elevatorDoorsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const cameraCommandRef = useRef(cameraCommand);
-  const walkFloorRef = useRef(walkFloor);
   const onWalkFloorChangeRef = useRef(onWalkFloorChange);
   const playerRef = useRef<PlayerState>({
     position: toVector(ROUTE_EVENTS[0].position),
@@ -404,18 +444,91 @@ export default function BuildingScene({
   });
   const movementKeysRef = useRef(new Set<string>());
   const mouseLookRef = useRef(false);
+  const navigationRef = useRef<NavigationState>({
+    mode: "walking",
+    floor: walkFloor,
+    transitionStarted: 0,
+    transitionFromY: yForFloor(walkFloor) + 0.38,
+    transitionToY: yForFloor(walkFloor) + 0.38,
+    transitionTargetFloor: walkFloor,
+    elevatorUnit: 1,
+    elevatorTargetFloor: walkFloor,
+    transitionArcDirection: 0,
+  });
+  const elevatorTimeoutRef = useRef<number | null>(null);
+  const [navigationMessage, setNavigationMessage] = useState("WASD 行走 · 靠近楼梯按 W 上行");
 
   cameraCommandRef.current = cameraCommand;
-  walkFloorRef.current = walkFloor;
   onWalkFloorChangeRef.current = onWalkFloorChange;
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
   useEffect(() => {
     const player = playerRef.current;
-    player.floor = walkFloor;
-    player.position.y = yForFloor(walkFloor) + 0.38;
+    const navigation = navigationRef.current;
+    if (navigation.mode === "walking") {
+      player.floor = walkFloor;
+      navigation.floor = walkFloor;
+      player.position.y = yForFloor(walkFloor) + 0.38;
+    }
   }, [walkFloor]);
+
+  const setElevatorDoor = (unit: 1 | 2, floor: number, open: boolean) => {
+    const door = elevatorDoorsRef.current.get(`${unit}-${floor}`);
+    if (door) door.scale.x = open ? 0.06 : 1;
+  };
+
+  const startStairTransition = (direction: 1 | -1) => {
+    const navigation = navigationRef.current;
+    const player = playerRef.current;
+    if (navigation.mode !== "walking") return;
+    const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
+    if (!stair) {
+      setNavigationMessage("请先走到楼梯口，再按 W / S 上下楼");
+      return;
+    }
+    const targetFloor = navigation.floor + direction;
+    const targetStair = SPATIAL_NODES.find(
+      (node) => node.kind === "stair" && node.unit === stair.unit && node.floor === targetFloor,
+    );
+    if (!targetStair || stair.access === "locked" || targetStair.access === "locked") {
+      setNavigationMessage("这段楼梯被锁住了，不能穿过楼层");
+      return;
+    }
+    movementKeysRef.current.clear();
+    navigation.mode = "stairs";
+    navigation.transitionStarted = performance.now();
+    navigation.transitionFromY = player.position.y;
+    navigation.transitionToY = yForFloor(targetFloor) + 0.38;
+    navigation.transitionTargetFloor = targetFloor;
+    navigation.transitionArcDirection = stair.unit === 1 ? -1 : 1;
+    setNavigationMessage(direction > 0 ? `楼梯上行至 ${targetFloor}F…` : `楼梯下行至 ${targetFloor}F…`);
+  };
+
+  const beginElevatorCall = () => {
+    const navigation = navigationRef.current;
+    const player = playerRef.current;
+    if (navigation.mode !== "walking") return;
+    const hall = nearestSpatialNode(player.position, "elevatorHall", navigation.floor);
+    if (!hall || (hall.unit !== 1 && hall.unit !== 2)) {
+      setNavigationMessage("请先走到电梯门前，再按 E 开门");
+      return;
+    }
+    const elevatorUnit = hall.unit;
+    movementKeysRef.current.clear();
+    navigation.mode = "elevator-opening";
+    navigation.elevatorUnit = elevatorUnit;
+    navigation.elevatorTargetFloor = navigation.floor;
+    setElevatorDoor(elevatorUnit, navigation.floor, false);
+    setNavigationMessage("电梯门正在打开…");
+    if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
+    elevatorTimeoutRef.current = window.setTimeout(() => {
+      if (navigationRef.current.mode !== "elevator-opening") return;
+      navigationRef.current.mode = "elevator-open";
+      setElevatorDoor(elevatorUnit, navigation.floor, true);
+      setNavigationMessage("电梯门已打开，按 W 进入轿厢");
+    }, 650);
+  };
 
   useEffect(() => {
     const editableTarget = (target: EventTarget | null) => {
@@ -425,14 +538,88 @@ export default function BuildingScene({
     const onKeyDown = (event: KeyboardEvent) => {
       if (editableTarget(event.target)) return;
       const key = event.key.toLowerCase();
-      if (["w", "a", "s", "d"].includes(key)) {
+      if (cameraCommandRef.current !== "walk") return;
+      const navigation = navigationRef.current;
+      const player = playerRef.current;
+      const isMovementKey = ["w", "a", "s", "d"].includes(key);
+      const numericFloor = event.key === "0" ? 10 : Number(event.key);
+
+      if (navigation.mode === "elevator-inside" && numericFloor >= 1 && numericFloor <= 10) {
+        navigation.elevatorTargetFloor = numericFloor;
+        setNavigationMessage(`目的楼层 ${numericFloor}F · 按 E 关门并运行`);
+        event.preventDefault();
+        return;
+      }
+
+      if (key === "e" && navigation.mode === "walking") {
+        beginElevatorCall();
+        event.preventDefault();
+        return;
+      }
+
+      if (key === "e" && navigation.mode === "elevator-inside") {
+        if (navigation.elevatorTargetFloor === navigation.floor) {
+          setNavigationMessage("请先用数字键选择目的楼层");
+          event.preventDefault();
+          return;
+        }
+        if (!elevatorDoorsRef.current.has(`${navigation.elevatorUnit}-${navigation.elevatorTargetFloor}`)) {
+          setNavigationMessage(`${navigation.elevatorUnit} 单元没有停靠 ${navigation.elevatorTargetFloor}F 的电梯门`);
+          event.preventDefault();
+          return;
+        }
+        setElevatorDoor(navigation.elevatorUnit, navigation.floor, false);
+        navigation.mode = "elevator-riding";
+        navigation.transitionStarted = performance.now();
+        navigation.transitionFromY = player.position.y;
+        navigation.transitionTargetFloor = navigation.elevatorTargetFloor;
+        navigation.transitionToY = yForFloor(navigation.elevatorTargetFloor) + 0.38;
+        movementKeysRef.current.clear();
+        setNavigationMessage(`电梯运行至 ${navigation.elevatorTargetFloor}F…`);
+        event.preventDefault();
+        return;
+      }
+
+      if (navigation.mode === "elevator-open" && key === "w") {
+        const cabin = nearestSpatialNode(player.position, "elevatorCabin", navigation.floor);
+        if (cabin) {
+          player.position.set(...cabin.position);
+          navigation.mode = "elevator-inside";
+          setNavigationMessage("电梯内 · 数字键选择楼层 · E 关门运行");
+        }
+        event.preventDefault();
+        return;
+      }
+
+      if (navigation.mode === "elevator-arrived" && isMovementKey) {
+        navigation.mode = "walking";
+        setNavigationMessage("电梯门已打开 · WASD 出电梯");
         movementKeysRef.current.add(key);
         event.preventDefault();
         return;
       }
-      const floor = event.key === "0" ? 10 : Number(event.key);
-      if (floor >= 1 && floor <= 10) {
-        onWalkFloorChangeRef.current(floor);
+
+      if (navigation.mode === "elevator-inside" && isMovementKey) {
+        event.preventDefault();
+        return;
+      }
+
+      if (["stairs", "elevator-opening", "elevator-riding"].includes(navigation.mode)) {
+        if (isMovementKey || key === "e") event.preventDefault();
+        return;
+      }
+
+      if (navigation.mode === "walking" && (key === "w" || key === "s")) {
+        const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
+        if (stair) {
+          startStairTransition(key === "w" ? 1 : -1);
+          event.preventDefault();
+          return;
+        }
+      }
+
+      if (isMovementKey) {
+        movementKeysRef.current.add(key);
         event.preventDefault();
       }
     };
@@ -444,6 +631,7 @@ export default function BuildingScene({
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
     };
   }, []);
 
@@ -537,7 +725,15 @@ export default function BuildingScene({
         if (!(unit === 1 && floor === 2)) {
           const elevatorX = x + (unit === 1 ? 2.7 : -2.7);
           addBox(floorGroup, [1.65, 1.8, 1.5], [elevatorX, y + 0.92, -2.25], palette.elevator, 0.2, true);
-          addFlatDoor(floorGroup, [elevatorX, y + 0.72, -1.43], 0.88, false, palette.elevator, floor === 6 && unit === 1 ? "6F Elevator Door" : undefined);
+          const elevatorDoor = addFlatDoor(
+            floorGroup,
+            [elevatorX, y + 0.72, -1.43],
+            0.88,
+            false,
+            palette.elevator,
+            floor === 6 && unit === 1 ? "6F Elevator Door" : undefined,
+          );
+          elevatorDoorsRef.current.set(`${unit}-${floor}`, elevatorDoor);
         }
 
         for (let room = 0; room < 3; room += 1) {
@@ -691,9 +887,52 @@ export default function BuildingScene({
       if (cameraCommandRef.current === "walk") {
         controls.enabled = false;
         const player = playerRef.current;
-        player.floor = walkFloorRef.current;
-        player.position.y = yForFloor(player.floor) + 0.38;
-        updateKeyboardPlayer(player, movementKeysRef.current, delta);
+        const navigation = navigationRef.current;
+        if (navigation.mode === "stairs") {
+          const transitionProgress = THREE.MathUtils.clamp(
+            (performance.now() - navigation.transitionStarted) / 980,
+            0,
+            1,
+          );
+          player.position.y = THREE.MathUtils.lerp(
+            navigation.transitionFromY,
+            navigation.transitionToY,
+            transitionProgress,
+          );
+          player.position.z = -2.25 + navigation.transitionArcDirection * Math.sin(transitionProgress * Math.PI) * 0.88;
+          if (transitionProgress >= 1) {
+            player.floor = navigation.transitionTargetFloor;
+            navigation.floor = player.floor;
+            navigation.mode = "walking";
+            onWalkFloorChangeRef.current(player.floor);
+            setNavigationMessage(`已到达 ${player.floor}F · WASD 行走`);
+          }
+        } else if (navigation.mode === "elevator-riding") {
+          const transitionProgress = THREE.MathUtils.clamp(
+            (performance.now() - navigation.transitionStarted) / 1500,
+            0,
+            1,
+          );
+          player.position.y = THREE.MathUtils.lerp(
+            navigation.transitionFromY,
+            navigation.transitionToY,
+            transitionProgress,
+          );
+          player.position.x = unitX(navigation.elevatorUnit) + (navigation.elevatorUnit === 1 ? 3.15 : -3.15);
+          player.position.z = -2.25;
+          if (transitionProgress >= 1) {
+            player.floor = navigation.transitionTargetFloor;
+            navigation.floor = player.floor;
+            navigation.mode = "elevator-arrived";
+            setElevatorDoor(navigation.elevatorUnit, player.floor, true);
+            onWalkFloorChangeRef.current(player.floor);
+            setNavigationMessage(`电梯已到 ${player.floor}F，门已打开 · WASD 出电梯`);
+          }
+        } else {
+          player.floor = navigation.floor;
+          player.position.y = yForFloor(player.floor) + 0.38;
+          if (navigation.mode === "walking") updateKeyboardPlayer(player, movementKeysRef.current, delta);
+        }
         applyFirstPersonCamera(camera, player);
       } else {
         controls.enabled = true;
@@ -720,6 +959,8 @@ export default function BuildingScene({
       });
       focusGroupsRef.current.clear();
       resonanceSurfacesRef.current = [];
+      elevatorDoorsRef.current.clear();
+      if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
     };
   }, []);
 
@@ -827,8 +1068,6 @@ export default function BuildingScene({
       if (heading) characterHeadingRef.current.copy(heading);
       applyChaseCamera(camera, controls, position, characterHeadingRef.current, true);
     } else if (cameraCommand === "walk") {
-      playerRef.current.floor = walkFloor;
-      playerRef.current.position.y = yForFloor(walkFloor) + 0.38;
       applyFirstPersonCamera(camera, playerRef.current);
     } else if (cameraCommand === "route") {
       controls.minDistance = 12;
@@ -870,6 +1109,12 @@ export default function BuildingScene({
           <p>内置预览环境禁用了 WebGL。请复制本页地址，在系统 Safari 或 Chrome 中打开：</p>
           <code>{window.location.href}</code>
           <small>左侧路线、底部播放和事件控制仍可使用；三维楼栋需要系统浏览器渲染。</small>
+        </div>
+      )}
+      {!rendererError && cameraCommand === "walk" && (
+        <div className="walk-status" role="status">
+          <span className="eyebrow">NAVIGATION</span>
+          <b>{navigationMessage}</b>
         </div>
       )}
     </div>
