@@ -592,6 +592,10 @@ export default function BuildingScene({
       }
 
       if (navigation.mode === "elevator-arrived" && isMovementKey) {
+        const hall = SPATIAL_NODES.find(
+          (node) => node.kind === "elevatorHall" && node.unit === navigation.elevatorUnit && node.floor === navigation.floor,
+        );
+        if (hall) player.position.set(...hall.position);
         navigation.mode = "walking";
         setNavigationMessage("电梯门已打开 · WASD 出电梯");
         movementKeysRef.current.add(key);
