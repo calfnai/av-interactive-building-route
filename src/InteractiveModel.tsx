@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bandsToWallReaction, useAudioBands } from "./audio-bands";
+import { bandsToWallReaction, FLOOR_AV_REACTIONS, floorAVReactionFor, useAudioBands } from "./audio-bands";
 import BuildingScene, { type CameraCommand } from "./BuildingScene";
 import HandControlPanel from "./HandControlPanel";
 import SoundControlPanel from "./SoundControlPanel";
@@ -20,10 +20,11 @@ const statusLabel = {
 
 export default function InteractiveModel() {
   const [progress, setProgress] = useState(0);
-  const [playing, setPlaying] = useState(true);
+  const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [floorFocus, setFloorFocus] = useState<number | null>(null);
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>("walk");
+  const [walkFloor, setWalkFloor] = useState(1);
   const [commandVersion, setCommandVersion] = useState(0);
   const [panelOpen, setPanelOpen] = useState(true);
   const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
@@ -107,7 +108,7 @@ export default function InteractiveModel() {
   }, [handActive, primaryHand.gesture, progress]);
 
   useEffect(() => {
-    if (!playing) return;
+    if (!playing || cameraCommand === "walk") return;
     let frame = 0;
     let previous = performance.now();
     const tick = (now: number) => {
@@ -125,7 +126,7 @@ export default function InteractiveModel() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [playing, speed]);
+  }, [cameraCommand, playing, speed]);
 
   const chapterStart = useMemo(() => {
     const starts = new Map<number, number>();
@@ -146,7 +147,7 @@ export default function InteractiveModel() {
     if (command === "walk" && progress >= 1) setProgress(0);
     setCameraCommand(command);
     setCommandVersion((value) => value + 1);
-    if (command === "walk") setPlaying(true);
+    if (command === "walk") setPlaying(false);
   };
 
   return (
@@ -181,6 +182,8 @@ export default function InteractiveModel() {
           cameraCommand={cameraCommand}
           commandVersion={commandVersion}
           wallReaction={wallReaction}
+          walkFloor={walkFloor}
+          onWalkFloorChange={setWalkFloor}
         />
 
         <HandControlPanel
@@ -195,7 +198,7 @@ export default function InteractiveModel() {
           onToggle={() => setHandPanelCollapsed((value) => !value)}
         />
 
-        <SoundControlPanel {...audio} />
+        <SoundControlPanel {...audio} floor={walkFloor} reaction={floorAVReactionFor(walkFloor)} />
 
         <div className="scene-tools" aria-label="三维视角控制">
           <button className={cameraCommand === "overview" ? "active" : ""} onClick={() => setCamera("overview")}>全楼</button>
@@ -203,6 +206,16 @@ export default function InteractiveModel() {
           <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
           <button className={cameraCommand === "walk" ? "active" : ""} onClick={() => setCamera("walk")}>第一人称</button>
           <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
+          <select
+            className="walk-floor-select"
+            value={walkFloor}
+            onChange={(event) => setWalkFloor(Number(event.target.value))}
+            aria-label="WASD体验楼层"
+          >
+            {FLOOR_AV_REACTIONS.map((reaction) => (
+              <option key={reaction.floor} value={reaction.floor}>{reaction.floor}F · {reaction.label.split(" / ")[0]}</option>
+            ))}
+          </select>
           <select
             value={floorFocus ?? "all"}
             onChange={(event) => setFloorFocus(event.target.value === "all" ? null : Number(event.target.value))}
@@ -272,10 +285,10 @@ export default function InteractiveModel() {
       </section>
 
       <footer className="transport">
-        <button className="play-button" onClick={() => {
+        <button className="play-button" disabled={cameraCommand === "walk"} onClick={() => {
           if (progress >= 1) setProgress(0);
           setPlaying((value) => !value);
-        }} aria-label={playing ? "暂停轨迹" : "播放轨迹"}>
+        }} aria-label={cameraCommand === "walk" ? "WASD行走中" : (playing ? "暂停轨迹" : "播放轨迹")}>
           {playing ? "Ⅱ" : "▶"}
         </button>
         <span className="timecode">{String(eventIndex + 1).padStart(2, "0")}<i>/</i>{ROUTE_EVENTS.length}</span>

@@ -15,7 +15,7 @@ import {
   type RouteEvent,
   type Vec3,
 } from "./spatial-data";
-import type { WallReactionState } from "./audio-bands";
+import { floorAVReactionFor, type FloorAVReaction, type WallReactionState } from "./audio-bands";
 
 export type CameraCommand = "overview" | "route" | "chase" | "walk" | "top";
 
@@ -32,6 +32,8 @@ interface BuildingSceneProps {
   cameraCommand: CameraCommand;
   commandVersion: number;
   wallReaction: WallReactionState;
+  walkFloor: number;
+  onWalkFloorChange: (floor: number) => void;
 }
 
 const palette = {
@@ -123,6 +125,39 @@ function applyWalkCamera(
     controls.target.lerp(lookAt, 0.24);
   }
   controls.update();
+}
+
+interface PlayerState {
+  position: THREE.Vector3;
+  yaw: number;
+  pitch: number;
+  floor: number;
+}
+
+function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerState) {
+  const eye = player.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+  const direction = new THREE.Vector3(
+    Math.sin(player.yaw) * Math.cos(player.pitch),
+    Math.sin(player.pitch),
+    Math.cos(player.yaw) * Math.cos(player.pitch),
+  );
+  camera.position.copy(eye);
+  camera.lookAt(eye.clone().add(direction));
+}
+
+function updateKeyboardPlayer(player: PlayerState, keys: Set<string>, delta: number) {
+  const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const movement = new THREE.Vector3();
+  if (keys.has("w")) movement.add(forward);
+  if (keys.has("s")) movement.sub(forward);
+  if (keys.has("d")) movement.add(right);
+  if (keys.has("a")) movement.sub(right);
+  if (!movement.lengthSq()) return;
+
+  movement.normalize().multiplyScalar(Math.min(delta, 0.05) * 3.6);
+  player.position.x = THREE.MathUtils.clamp(player.position.x + movement.x, -12.4, 12.4);
+  player.position.z = THREE.MathUtils.clamp(player.position.z + movement.z, -5.2, 5.2);
 }
 
 function faceMarker(marker: THREE.Group, heading: THREE.Vector3) {
@@ -220,6 +255,8 @@ function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
 }
 
 interface ResonanceSurface {
+  floor: number;
+  theme: FloorAVReaction;
   panelMaterial: THREE.ShaderMaterial;
   stripMaterials: THREE.MeshStandardMaterial[];
   particleMaterial: THREE.PointsMaterial;
@@ -227,9 +264,10 @@ interface ResonanceSurface {
   rippleMaterials: THREE.MeshBasicMaterial[];
 }
 
-function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSurface {
+function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: number): ResonanceSurface {
   const group = new THREE.Group();
   group.position.set(...position);
+  const theme = floorAVReactionFor(floor);
 
   addBox(group, [1.04, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
   const panelMaterial = new THREE.ShaderMaterial({
@@ -239,6 +277,8 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
       uColorShift: { value: 0 },
       uLineDensity: { value: 0 },
       uBloom: { value: 0 },
+      uHue: { value: theme.hue },
+      uPattern: { value: theme.pattern },
     },
       vertexShader: `
       uniform float uTime;
@@ -256,12 +296,17 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
       uniform float uColorShift;
       uniform float uLineDensity;
       uniform float uBloom;
+      uniform float uHue;
+      uniform float uPattern;
       varying vec2 vUv;
+      vec3 hsv2rgb(vec3 c) {
+        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+      }
       void main() {
-        vec3 cool = vec3(0.08, 0.48, 0.52);
-        vec3 warm = vec3(0.86, 0.91, 0.28);
-        vec3 base = mix(cool, warm, uColorShift);
-        float channels = smoothstep(0.56, 0.92, sin((vUv.x * 42.0 + vUv.y * 5.0) * 3.14159) * 0.5 + 0.5);
+        vec3 base = hsv2rgb(vec3(mod(uHue + uColorShift * 0.12, 1.0), 0.72, 0.72));
+        float channels = smoothstep(0.56, 0.92, sin((vUv.y * uPattern + vUv.x * 7.0) * 3.14159) * 0.5 + 0.5);
         float glow = 0.28 + uBloom * 1.12 + channels * uLineDensity * 0.95;
         gl_FragColor = vec4(base * glow, 0.78 + uBloom * 0.2);
       }
@@ -317,10 +362,10 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3): ResonanceSu
     depthWrite: false,
   });
   group.add(new THREE.Points(particleGeometry, particleMaterial));
-  group.add(createTextSprite("RESONANCE", "#dffb8a", 0.42));
+  group.add(createTextSprite(`${floor}F · ${theme.label}`, "#dffb8a", 0.34));
   group.children[group.children.length - 1].position.set(0, 1.3, 0.08);
   scene.add(group);
-  return { panelMaterial, stripMaterials, particleMaterial, rippleMeshes, rippleMaterials };
+  return { floor, theme, panelMaterial, stripMaterials, particleMaterial, rippleMeshes, rippleMaterials };
 }
 
 export default function BuildingScene({
@@ -336,6 +381,8 @@ export default function BuildingScene({
   cameraCommand,
   commandVersion,
   wallReaction,
+  walkFloor,
+  onWalkFloorChange,
 }: BuildingSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [rendererError, setRendererError] = useState(false);
@@ -346,8 +393,59 @@ export default function BuildingScene({
   const routeRef = useRef<THREE.Line | null>(null);
   const ghostRouteRef = useRef<THREE.Line | null>(null);
   const resonanceSurfacesRef = useRef<ResonanceSurface[]>([]);
+  const cameraCommandRef = useRef(cameraCommand);
+  const walkFloorRef = useRef(walkFloor);
+  const onWalkFloorChangeRef = useRef(onWalkFloorChange);
+  const playerRef = useRef<PlayerState>({
+    position: toVector(ROUTE_EVENTS[0].position),
+    yaw: Math.PI,
+    pitch: 0,
+    floor: walkFloor,
+  });
+  const movementKeysRef = useRef(new Set<string>());
+  const mouseLookRef = useRef(false);
+
+  cameraCommandRef.current = cameraCommand;
+  walkFloorRef.current = walkFloor;
+  onWalkFloorChangeRef.current = onWalkFloorChange;
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
+
+  useEffect(() => {
+    const player = playerRef.current;
+    player.floor = walkFloor;
+    player.position.y = yForFloor(walkFloor) + 0.38;
+  }, [walkFloor]);
+
+  useEffect(() => {
+    const editableTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      return element?.tagName === "INPUT" || element?.tagName === "SELECT" || element?.tagName === "TEXTAREA";
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (editableTarget(event.target)) return;
+      const key = event.key.toLowerCase();
+      if (["w", "a", "s", "d"].includes(key)) {
+        movementKeysRef.current.add(key);
+        event.preventDefault();
+        return;
+      }
+      const floor = event.key === "0" ? 10 : Number(event.key);
+      if (floor >= 1 && floor <= 10) {
+        onWalkFloorChangeRef.current(floor);
+        event.preventDefault();
+      }
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      movementKeysRef.current.delete(event.key.toLowerCase());
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, []);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -381,6 +479,21 @@ export default function BuildingScene({
     renderer.domElement.setAttribute("aria-label", "居民楼栋三维空间与人物行进轨迹");
     host.appendChild(renderer.domElement);
 
+    const onPointerDown = () => {
+      mouseLookRef.current = true;
+    };
+    const onPointerUp = () => {
+      mouseLookRef.current = false;
+    };
+    const onPointerMove = (event: MouseEvent) => {
+      if (!mouseLookRef.current || cameraCommandRef.current !== "walk") return;
+      playerRef.current.yaw -= event.movementX * 0.004;
+      playerRef.current.pitch = THREE.MathUtils.clamp(playerRef.current.pitch - event.movementY * 0.003, -0.9, 0.75);
+    };
+    renderer.domElement.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("mouseup", onPointerUp);
+    window.addEventListener("mousemove", onPointerMove);
+
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.065;
@@ -388,6 +501,7 @@ export default function BuildingScene({
     controls.minDistance = 12;
     controls.maxDistance = 72;
     controls.maxPolarAngle = Math.PI * 0.88;
+    controls.enabled = cameraCommandRef.current !== "walk";
     controlsRef.current = controls;
 
     scene.add(new THREE.HemisphereLight(0xccefff, 0x182126, 2.25));
@@ -473,10 +587,11 @@ export default function BuildingScene({
     grid.position.y = -0.15;
     scene.add(grid);
 
-    resonanceSurfacesRef.current = [
-      createResonanceSurface(scene, [unitX(1) - 1.2, yForFloor(1) + 1.2, -3.3]),
-      ...[3, 6, 8, 10].map((floor) => createResonanceSurface(scene, [0, yForFloor(floor) + 1.2, -1.15])),
-    ];
+    resonanceSurfacesRef.current = FLOORS.map((floor) => createResonanceSurface(
+      scene,
+      floor === 1 ? [unitX(1) - 1.2, yForFloor(floor) + 1.2, -3.3] : [0, yForFloor(floor) + 1.2, -1.15],
+      floor,
+    ));
 
     const nodeById = new Map(SPATIAL_NODES.map((node) => [node.id, node]));
     const graphGroup = new THREE.Group();
@@ -566,13 +681,24 @@ export default function BuildingScene({
     const clock = new THREE.Clock();
     const animate = () => {
       frame = requestAnimationFrame(animate);
+      const delta = clock.getDelta();
       const t = clock.getElapsedTime();
       halo.rotation.z = t * 0.65;
       body.scale.setScalar(1 + Math.sin(t * 4) * 0.035);
       resonanceSurfacesRef.current.forEach((surface) => {
         surface.panelMaterial.uniforms.uTime.value = t;
       });
-      controls.update();
+      if (cameraCommandRef.current === "walk") {
+        controls.enabled = false;
+        const player = playerRef.current;
+        player.floor = walkFloorRef.current;
+        player.position.y = yForFloor(player.floor) + 0.38;
+        updateKeyboardPlayer(player, movementKeysRef.current, delta);
+        applyFirstPersonCamera(camera, player);
+      } else {
+        controls.enabled = true;
+        controls.update();
+      }
       renderer.render(scene, camera);
     };
     animate();
@@ -580,6 +706,9 @@ export default function BuildingScene({
     return () => {
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("mouseup", onPointerUp);
+      window.removeEventListener("mousemove", onPointerMove);
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
@@ -596,25 +725,26 @@ export default function BuildingScene({
 
   useEffect(() => {
     resonanceSurfacesRef.current.forEach((surface) => {
-      surface.panelMaterial.uniforms.uDisplacement.value = wallReaction.displacement;
+      const floorFocus = surface.floor === walkFloor ? 1 : 0.22;
+      surface.panelMaterial.uniforms.uDisplacement.value = wallReaction.displacement * floorFocus;
       surface.panelMaterial.uniforms.uColorShift.value = wallReaction.colorShift;
-      surface.panelMaterial.uniforms.uLineDensity.value = wallReaction.lineDensity;
-      surface.panelMaterial.uniforms.uBloom.value = wallReaction.bloom;
+      surface.panelMaterial.uniforms.uLineDensity.value = wallReaction.lineDensity * floorFocus;
+      surface.panelMaterial.uniforms.uBloom.value = wallReaction.bloom * floorFocus;
       surface.stripMaterials.forEach((material, index) => {
         material.emissive.setHSL(0.48 - wallReaction.colorShift * 0.14 + index * 0.005, 0.72, 0.34);
-        material.emissiveIntensity = 0.3 + wallReaction.bloom * 2.2;
-        material.opacity = 0.18 + wallReaction.lineDensity * 0.62;
+        material.emissiveIntensity = 0.16 + wallReaction.bloom * floorFocus * 2.2;
+        material.opacity = 0.12 + wallReaction.lineDensity * floorFocus * 0.62;
       });
-      surface.particleMaterial.opacity = 0.06 + wallReaction.particleEmission * 0.82;
-      surface.particleMaterial.size = 0.022 + wallReaction.particleEmission * 0.045;
+      surface.particleMaterial.opacity = 0.03 + wallReaction.particleEmission * floorFocus * 0.82;
+      surface.particleMaterial.size = 0.018 + wallReaction.particleEmission * floorFocus * 0.045;
       surface.rippleMeshes.forEach((ripple, index) => {
-        const pulse = wallReaction.displacement * (1 + index * 0.24) + wallReaction.bloom * 0.42;
+        const pulse = wallReaction.displacement * floorFocus * (1 + index * 0.24) + wallReaction.bloom * floorFocus * 0.42;
         ripple.scale.setScalar(0.5 + index * 0.22 + pulse * 1.35);
-        surface.rippleMaterials[index].opacity = 0.12 + wallReaction.bloom * (0.38 - index * 0.06);
+        surface.rippleMaterials[index].opacity = 0.04 + wallReaction.bloom * floorFocus * (0.38 - index * 0.06);
         surface.rippleMaterials[index].color.setHSL(0.16 - wallReaction.colorShift * 0.08, 0.86, 0.58);
       });
     });
-  }, [wallReaction]);
+  }, [wallReaction, walkFloor]);
 
   useEffect(() => {
     const marker = markerRef.current;
@@ -640,8 +770,6 @@ export default function BuildingScene({
     const controls = controlsRef.current;
     if (cameraCommand === "chase" && camera && controls) {
       applyChaseCamera(camera, controls, renderedPosition, characterHeadingRef.current);
-    } else if (cameraCommand === "walk" && camera && controls) {
-      applyWalkCamera(camera, controls, renderedPosition, characterHeadingRef.current);
     }
   }, [progress, cameraCommand, floorSpread]);
 
@@ -686,6 +814,7 @@ export default function BuildingScene({
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
+    controls.enabled = cameraCommand !== "walk";
     if (cameraCommand === "top") {
       controls.minDistance = 12;
       controls.maxDistance = 72;
@@ -698,11 +827,9 @@ export default function BuildingScene({
       if (heading) characterHeadingRef.current.copy(heading);
       applyChaseCamera(camera, controls, position, characterHeadingRef.current, true);
     } else if (cameraCommand === "walk") {
-      controls.minDistance = 0.2;
-      controls.maxDistance = 4;
-      const { position, heading } = routePoseAt(progress);
-      if (heading) characterHeadingRef.current.copy(heading);
-      applyWalkCamera(camera, controls, explodePosition(position, floorSpread), characterHeadingRef.current, true);
+      playerRef.current.floor = walkFloor;
+      playerRef.current.position.y = yForFloor(walkFloor) + 0.38;
+      applyFirstPersonCamera(camera, playerRef.current);
     } else if (cameraCommand === "route") {
       controls.minDistance = 12;
       controls.maxDistance = 72;
@@ -715,13 +842,13 @@ export default function BuildingScene({
       camera.position.set(32, 27, 36);
       controls.target.set(0, 10, 0);
     }
-    controls.update();
-  }, [cameraCommand, commandVersion, currentEvent, floorSpread]);
+    if (controls.enabled) controls.update();
+  }, [cameraCommand, commandVersion, currentEvent, floorSpread, walkFloor]);
 
   useEffect(() => {
     const camera = cameraRef.current;
     const controls = controlsRef.current;
-    if (handOrbit === null || handZoom === null || !camera || !controls) return;
+    if (cameraCommand === "walk" || handOrbit === null || handZoom === null || !camera || !controls) return;
     const angle = THREE.MathUtils.lerp(-Math.PI * 0.72, Math.PI * 0.72, handOrbit);
     const distance = THREE.MathUtils.lerp(46, 13, handZoom);
     const target = controls.target;
@@ -732,7 +859,7 @@ export default function BuildingScene({
     );
     camera.position.lerp(desired, 0.2);
     controls.update();
-  }, [handOrbit, handZoom]);
+  }, [cameraCommand, handOrbit, handZoom]);
 
   return (
     <div className={`scene-host${rendererError ? " scene-host-fallback" : ""}`} ref={hostRef}>

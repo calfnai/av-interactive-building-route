@@ -325,6 +325,21 @@ button {
   color: var(--lime);
 }
 
+.floor-reaction-label {
+  margin-top: 11px;
+  color: var(--teal);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.walk-hint {
+  margin: 7px 0 0;
+  color: #71838a;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .sound-error {
   margin: 9px 0 0;
   color: var(--orange);
@@ -880,6 +895,11 @@ button {
   color: #11181b;
   cursor: pointer;
   font-size: 13px;
+}
+
+.play-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.36;
 }
 
 .timecode {

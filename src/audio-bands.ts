@@ -19,6 +19,30 @@ export interface WallReactionState {
   particleEmission: number;
 }
 
+export interface FloorAVReaction {
+  floor: number;
+  label: string;
+  hue: number;
+  pattern: number;
+}
+
+export const FLOOR_AV_REACTIONS: FloorAVReaction[] = [
+  { floor: 1, label: "SUB BASS / FOUNDATION", hue: 0.52, pattern: 8 },
+  { floor: 2, label: "GRAIN / STAIRS", hue: 0.59, pattern: 14 },
+  { floor: 3, label: "MID / GLASS", hue: 0.12, pattern: 20 },
+  { floor: 4, label: "PHASE / HALL", hue: 0.82, pattern: 12 },
+  { floor: 5, label: "STATIC / ROOM", hue: 0.67, pattern: 28 },
+  { floor: 6, label: "FEEDBACK / BRIDGE", hue: 0.94, pattern: 18 },
+  { floor: 7, label: "DUST / HIGH", hue: 0.3, pattern: 34 },
+  { floor: 8, label: "ECHO / VOID", hue: 0.55, pattern: 10 },
+  { floor: 9, label: "FRACTURE / LINE", hue: 0.03, pattern: 24 },
+  { floor: 10, label: "TERMINAL / BLOOM", hue: 0.76, pattern: 16 },
+];
+
+export function floorAVReactionFor(floor: number) {
+  return FLOOR_AV_REACTIONS.find((reaction) => reaction.floor === floor) ?? FLOOR_AV_REACTIONS[0];
+}
+
 export interface AudioBandState {
   bands: AudioBands;
   source: AudioSource;
