@@ -17,6 +17,8 @@ export interface WallReactionState {
   lineDensity: number;
   bloom: number;
   particleEmission: number;
+  pulse: number;
+  propagation: number;
 }
 
 export interface FloorAVReaction {
@@ -63,15 +65,16 @@ export const EMPTY_AUDIO_BANDS: AudioBands = {
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
 export function sampleBands(time: number): AudioBands {
-  const kick = Math.pow(Math.max(0, Math.sin(time * 2.15)), 12);
+  const kick = Math.pow(Math.max(0, Math.sin(time * 2.15)), 10);
   const bassPulse = Math.sin(time * 3.4) * 0.5 + 0.5;
   const midPulse = Math.sin(time * 5.7 + 1.1) * 0.5 + 0.5;
   const highPulse = Math.sin(time * 12.8 + 0.4) * 0.5 + 0.5;
-  const subBass = clamp01(0.14 + kick * 0.8);
-  const bass = clamp01(0.18 + bassPulse * 0.34 + kick * 0.24);
-  const lowMid = clamp01(0.16 + midPulse * 0.38);
-  const mid = clamp01(0.12 + (Math.sin(time * 8.2) * 0.5 + 0.5) * 0.42);
-  const high = clamp01(0.08 + highPulse * 0.52);
+  const travellingWave = Math.sin(time * 1.35 + Math.sin(time * 0.35) * 1.8) * 0.5 + 0.5;
+  const subBass = clamp01(0.22 + kick * 0.78 + travellingWave * 0.12);
+  const bass = clamp01(0.22 + bassPulse * 0.42 + kick * 0.3);
+  const lowMid = clamp01(0.2 + midPulse * 0.48 + travellingWave * 0.12);
+  const mid = clamp01(0.18 + (Math.sin(time * 8.2) * 0.5 + 0.5) * 0.52);
+  const high = clamp01(0.14 + highPulse * 0.62 + Math.pow(Math.max(0, Math.sin(time * 4.8 + 0.8)), 8) * 0.18);
 
   return {
     subBass,
@@ -85,11 +88,13 @@ export function sampleBands(time: number): AudioBands {
 
 export function bandsToWallReaction(bands: AudioBands, eventBoost = 0): WallReactionState {
   return {
-    displacement: clamp01(bands.subBass * 0.62 + bands.bass * 0.38 + eventBoost * 0.18),
+    displacement: clamp01(bands.subBass * 0.72 + bands.bass * 0.48 + eventBoost * 0.24),
     colorShift: clamp01(bands.lowMid * 0.58 + bands.mid * 0.42),
-    lineDensity: clamp01(bands.lowMid * 0.44 + bands.mid * 0.56),
-    bloom: clamp01(bands.bass * 0.28 + bands.high * 0.22 + bands.activity * 0.5 + eventBoost * 0.24),
-    particleEmission: clamp01(bands.high * 0.72 + bands.activity * 0.28),
+    lineDensity: clamp01(bands.lowMid * 0.56 + bands.mid * 0.64 + eventBoost * 0.12),
+    bloom: clamp01(bands.bass * 0.38 + bands.high * 0.32 + bands.activity * 0.62 + eventBoost * 0.32),
+    particleEmission: clamp01(bands.high * 0.82 + bands.activity * 0.38),
+    pulse: clamp01(bands.subBass * 0.62 + bands.bass * 0.38 + eventBoost * 0.3),
+    propagation: clamp01(bands.activity * 0.72 + bands.lowMid * 0.38 + eventBoost * 0.22),
   };
 }
 

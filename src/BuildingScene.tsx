@@ -16,6 +16,12 @@ import {
   type Vec3,
 } from "./spatial-data";
 import { floorAVReactionFor, type FloorAVReaction, type WallReactionState } from "./audio-bands";
+import {
+  createCorridorColliders,
+  movementVector,
+  resolveMotion,
+  type Collider,
+} from "./fps-navigation";
 
 export type CameraCommand = "overview" | "route" | "chase" | "walk" | "top";
 
@@ -151,12 +157,17 @@ interface NavigationState {
   transitionToY: number;
   transitionTargetFloor: number;
   transitionArcDirection: number;
+  transitionFromZ: number;
+  transitionToZ: number;
+  transitionFromX: number;
+  transitionStairX: number;
+  transitionDuration: number;
   elevatorUnit: 1 | 2;
   elevatorTargetFloor: number;
 }
 
-function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerState) {
-  const eye = player.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerState, cameraBob = 0) {
+  const eye = player.position.clone().add(new THREE.Vector3(0, 1.5 + cameraBob, 0));
   const direction = new THREE.Vector3(
     Math.sin(player.yaw) * Math.cos(player.pitch),
     Math.sin(player.pitch),
@@ -166,20 +177,25 @@ function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerS
   camera.lookAt(eye.clone().add(direction));
 }
 
-function updateKeyboardPlayer(player: PlayerState, keys: Set<string>, delta: number) {
-  const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
-  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-  const movement = new THREE.Vector3();
-  if (keys.has("w")) movement.add(forward);
-  if (keys.has("s")) movement.sub(forward);
-  if (keys.has("d")) movement.add(right);
-  if (keys.has("a")) movement.sub(right);
-  if (!movement.lengthSq()) return;
-
+function updateKeyboardPlayer(player: PlayerState, keys: Set<string>, delta: number, colliders: Collider[]) {
+  const movement = movementVector(player.yaw, {
+    forward: keys.has("w"),
+    backward: keys.has("s"),
+    left: keys.has("a"),
+    right: keys.has("d"),
+  });
+  if (!movement.x && !movement.z) return false;
   const speed = keys.has("shift") ? 5.1 : 3.6;
-  movement.normalize().multiplyScalar(Math.min(delta, 0.05) * speed);
-  player.position.x = THREE.MathUtils.clamp(player.position.x + movement.x, -12.4, 12.4);
-  player.position.z = THREE.MathUtils.clamp(player.position.z + movement.z, -5.2, 5.2);
+  const step = Math.min(delta, 0.05) * speed;
+  const resolved = resolveMotion(
+    { x: player.position.x, z: player.position.z },
+    { x: movement.x * step, z: movement.z * step },
+    colliders,
+  );
+  const moved = resolved.x !== player.position.x || resolved.z !== player.position.z;
+  player.position.x = resolved.x;
+  player.position.z = resolved.z;
+  return moved;
 }
 
 function nearestSpatialNode(
@@ -296,21 +312,26 @@ function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
 }
 
 interface ResonanceSurface {
+  group: THREE.Group;
   floor: number;
   theme: FloorAVReaction;
   panelMaterial: THREE.ShaderMaterial;
+  stripMeshes: THREE.Mesh[];
   stripMaterials: THREE.MeshStandardMaterial[];
   particleMaterial: THREE.PointsMaterial;
+  particleGeometry: THREE.BufferGeometry;
+  particleBase: Float32Array;
+  particlePhases: Float32Array;
   rippleMeshes: THREE.Mesh[];
   rippleMaterials: THREE.MeshBasicMaterial[];
 }
 
-function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: number): ResonanceSurface {
+function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: number, showLabel = false): ResonanceSurface {
   const group = new THREE.Group();
   group.position.set(...position);
   const theme = floorAVReactionFor(floor);
 
-  addBox(group, [1.04, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
+  addBox(group, [1.62, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
   const panelMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
@@ -318,25 +339,33 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
       uColorShift: { value: 0 },
       uLineDensity: { value: 0 },
       uBloom: { value: 0 },
+      uPulse: { value: 0 },
+      uPropagation: { value: 0 },
       uHue: { value: theme.hue },
       uPattern: { value: theme.pattern },
     },
-      vertexShader: `
+    vertexShader: `
       uniform float uTime;
       uniform float uDisplacement;
+      uniform float uPulse;
+      uniform float uPropagation;
       varying vec2 vUv;
       void main() {
         vUv = uv;
         vec3 transformed = position;
-        float wave = sin(position.y * 15.0 + uTime * 1.8) * cos(position.x * 18.0 + uTime * 0.7);
-        transformed.z += wave * uDisplacement * 0.12;
+        float wave = sin(position.y * 15.0 + uTime * (1.8 + uPropagation * 4.0))
+          * cos(position.x * 18.0 + uTime * (0.7 + uPulse * 2.0));
+        transformed.z += wave * uDisplacement * (0.18 + uPulse * 0.34);
+        transformed.x += sin(position.y * 5.0 + uTime * 0.8) * uDisplacement * 0.035;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(transformed, 1.0);
       }
     `,
     fragmentShader: `
+      uniform float uTime;
       uniform float uColorShift;
       uniform float uLineDensity;
       uniform float uBloom;
+      uniform float uPropagation;
       uniform float uHue;
       uniform float uPattern;
       varying vec2 vUv;
@@ -347,9 +376,10 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
       }
       void main() {
         vec3 base = hsv2rgb(vec3(mod(uHue + uColorShift * 0.12, 1.0), 0.72, 0.72));
-        float channels = smoothstep(0.56, 0.92, sin((vUv.y * uPattern + vUv.x * 7.0) * 3.14159) * 0.5 + 0.5);
-        float glow = 0.28 + uBloom * 1.12 + channels * uLineDensity * 0.95;
-        gl_FragColor = vec4(base * glow, 0.78 + uBloom * 0.2);
+        float sweep = sin((vUv.y * uPattern + vUv.x * 7.0 + uTime * (0.55 + uPropagation * 2.8)) * 3.14159) * 0.5 + 0.5;
+        float channels = smoothstep(0.48, 0.88, sweep);
+        float glow = 0.32 + uBloom * 1.55 + channels * uLineDensity * 1.5;
+        gl_FragColor = vec4(base * glow, 0.82 + uBloom * 0.18);
       }
     `,
     transparent: true,
@@ -361,8 +391,10 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
   group.add(panel);
 
   const stripMaterials: THREE.MeshStandardMaterial[] = [];
+  const stripMeshes: THREE.Mesh[] = [];
   for (let index = 0; index < 7; index += 1) {
-    const strip = addBox(group, [0.025, 1.88, 0.035], [-0.34 + index * 0.115, 0, 0.075], 0x6de0d0, 0.34);
+    const strip = addBox(group, [0.025, 1.88, 0.035], [-0.52 + index * 0.17, 0, 0.075], 0x6de0d0, 0.34);
+    stripMeshes.push(strip);
     stripMaterials.push(strip.material as THREE.MeshStandardMaterial);
   }
 
@@ -385,12 +417,19 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
     rippleMaterials.push(rippleMaterial);
   }
 
-  const particlePositions = new Float32Array(160 * 3);
-  for (let index = 0; index < 160; index += 1) {
+  const particleCount = 240;
+  const particlePositions = new Float32Array(particleCount * 3);
+  const particleBase = new Float32Array(particleCount * 3);
+  const particlePhases = new Float32Array(particleCount);
+  for (let index = 0; index < particleCount; index += 1) {
     const seed = index * 17.731;
-    particlePositions[index * 3] = ((Math.sin(seed) * 0.5 + 0.5) - 0.5) * 0.84;
-    particlePositions[index * 3 + 1] = ((Math.sin(seed * 1.7) * 0.5 + 0.5) - 0.5) * 1.98;
-    particlePositions[index * 3 + 2] = 0.12 + (Math.sin(seed * 2.3) * 0.5 + 0.5) * 0.06;
+    particleBase[index * 3] = ((Math.sin(seed) * 0.5 + 0.5) - 0.5) * 1.35;
+    particleBase[index * 3 + 1] = ((Math.sin(seed * 1.7) * 0.5 + 0.5) - 0.5) * 1.98;
+    particleBase[index * 3 + 2] = 0.12 + (Math.sin(seed * 2.3) * 0.5 + 0.5) * 0.06;
+    particlePositions[index * 3] = particleBase[index * 3];
+    particlePositions[index * 3 + 1] = particleBase[index * 3 + 1];
+    particlePositions[index * 3 + 2] = particleBase[index * 3 + 2];
+    particlePhases[index] = Math.sin(seed * 3.1) * 0.5 + 0.5;
   }
   const particleGeometry = new THREE.BufferGeometry();
   particleGeometry.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3));
@@ -403,10 +442,25 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
     depthWrite: false,
   });
   group.add(new THREE.Points(particleGeometry, particleMaterial));
-  group.add(createTextSprite(`${floor}F · ${theme.label}`, "#dffb8a", 0.34));
-  group.children[group.children.length - 1].position.set(0, 1.3, 0.08);
+  if (showLabel) {
+    group.add(createTextSprite(`${floor}F · ${theme.label}`, "#dffb8a", 0.34));
+    group.children[group.children.length - 1].position.set(0, 1.3, 0.08);
+  }
   scene.add(group);
-  return { floor, theme, panelMaterial, stripMaterials, particleMaterial, rippleMeshes, rippleMaterials };
+  return {
+    group,
+    floor,
+    theme,
+    panelMaterial,
+    stripMeshes,
+    stripMaterials,
+    particleMaterial,
+    particleGeometry,
+    particleBase,
+    particlePhases,
+    rippleMeshes,
+    rippleMaterials,
+  };
 }
 
 export default function BuildingScene({
@@ -434,11 +488,19 @@ export default function BuildingScene({
   const routeRef = useRef<THREE.Line | null>(null);
   const ghostRouteRef = useRef<THREE.Line | null>(null);
   const resonanceSurfacesRef = useRef<ResonanceSurface[]>([]);
+  const collidersRef = useRef<Collider[]>([]);
+  const wallReactionRef = useRef(wallReaction);
+  const locomotionPhaseRef = useRef(0);
   const elevatorDoorsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const cameraCommandRef = useRef(cameraCommand);
   const onWalkFloorChangeRef = useRef(onWalkFloorChange);
+  const initialPlayerPosition = SPATIAL_NODES.find(
+    (node) => node.kind === "public" && node.unit === 1 && node.floor === 1,
+  )?.position ?? ROUTE_EVENTS[0].position;
   const playerRef = useRef<PlayerState>({
-    position: toVector(ROUTE_EVENTS[0].position),
+    // Start in the public corridor, not inside the stair trigger. The player
+    // must deliberately walk to a stair mouth before a vertical transition.
+    position: toVector(initialPlayerPosition),
     yaw: Math.PI,
     pitch: 0,
     floor: walkFloor,
@@ -455,13 +517,26 @@ export default function BuildingScene({
     elevatorUnit: 1,
     elevatorTargetFloor: walkFloor,
     transitionArcDirection: 0,
+    transitionFromZ: -2.25,
+    transitionToZ: -2.25,
+    transitionFromX: unitX(1) - 2.4,
+    transitionStairX: unitX(1) - 2.4,
+    transitionDuration: 1250,
   });
   const elevatorTimeoutRef = useRef<number | null>(null);
   const [fpsPointerLocked, setFpsPointerLocked] = useState(false);
-  const [navigationMessage, setNavigationMessage] = useState("点击画面锁定鼠标 · WASD 行走");
+  const [navigationMessage, setNavigationMessageState] = useState("点击画面锁定鼠标 · WASD 行走");
+  const navigationMessageRef = useRef("点击画面锁定鼠标 · WASD 行走");
+
+  const setNavigationMessage = (message: string) => {
+    if (navigationMessageRef.current === message) return;
+    navigationMessageRef.current = message;
+    setNavigationMessageState(message);
+  };
 
   cameraCommandRef.current = cameraCommand;
   onWalkFloorChangeRef.current = onWalkFloorChange;
+  wallReactionRef.current = wallReaction;
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
@@ -473,6 +548,9 @@ export default function BuildingScene({
       navigation.floor = walkFloor;
       player.position.y = yForFloor(walkFloor) + 0.38;
     }
+    collidersRef.current = createCorridorColliders(walkFloor, {
+      openInterconnect: walkFloor === 8 || walkFloor === 10,
+    });
   }, [walkFloor]);
 
   const setElevatorDoor = (unit: 1 | 2, floor: number, open: boolean) => {
@@ -504,6 +582,11 @@ export default function BuildingScene({
     navigation.transitionToY = yForFloor(targetFloor) + 0.38;
     navigation.transitionTargetFloor = targetFloor;
     navigation.transitionArcDirection = stair.unit === 1 ? -1 : 1;
+    navigation.transitionFromZ = player.position.z;
+    navigation.transitionToZ = targetStair.position[2];
+    navigation.transitionFromX = player.position.x;
+    navigation.transitionStairX = stair.position[0];
+    navigation.transitionDuration = 1250;
     setNavigationMessage(direction > 0 ? `楼梯上行至 ${targetFloor}F…` : `楼梯下行至 ${targetFloor}F…`);
   };
 
@@ -662,7 +745,7 @@ export default function BuildingScene({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.domElement.setAttribute("aria-label", "居民楼栋三维空间与人物行进轨迹");
     renderer.domElement.tabIndex = 0;
     host.appendChild(renderer.domElement);
@@ -807,11 +890,26 @@ export default function BuildingScene({
     grid.position.y = -0.15;
     scene.add(grid);
 
-    resonanceSurfacesRef.current = FLOORS.map((floor) => createResonanceSurface(
-      scene,
-      floor === 1 ? [unitX(1) - 1.2, yForFloor(floor) + 1.2, -3.3] : [0, yForFloor(floor) + 1.2, -1.15],
-      floor,
-    ));
+    resonanceSurfacesRef.current = FLOORS.flatMap((floor) => [
+      createResonanceSurface(
+        scene,
+        [unitX(1) + 1.0, yForFloor(floor) + 1.2, -3.5],
+        floor,
+        false,
+      ),
+      createResonanceSurface(
+        scene,
+        [0, yForFloor(floor) + 1.2, -1.15],
+        floor,
+        true,
+      ),
+      createResonanceSurface(
+        scene,
+        [unitX(2) - 1.0, yForFloor(floor) + 1.2, -3.5],
+        floor,
+        false,
+      ),
+    ]);
 
     const nodeById = new Map(SPATIAL_NODES.map((node) => [node.id, node]));
     const graphGroup = new THREE.Group();
@@ -898,36 +996,101 @@ export default function BuildingScene({
     resizeObserver.observe(host);
 
     let frame = 0;
-    const clock = new THREE.Clock();
+    const animationStarted = performance.now();
+    let previousFrame = animationStarted;
     const animate = () => {
       frame = requestAnimationFrame(animate);
-      const delta = clock.getDelta();
-      const t = clock.getElapsedTime();
+      const now = performance.now();
+      const delta = Math.min((now - previousFrame) / 1000, 0.05);
+      const t = (now - animationStarted) / 1000;
+      previousFrame = now;
       halo.rotation.z = t * 0.65;
       body.scale.setScalar(1 + Math.sin(t * 4) * 0.035);
+      const navigation = navigationRef.current;
+      const reaction = wallReactionRef.current;
+      const activeFloor = navigation.floor;
       resonanceSurfacesRef.current.forEach((surface) => {
-        surface.panelMaterial.uniforms.uTime.value = t;
+        const floorDistance = Math.abs(surface.floor - activeFloor);
+        // The audio field is global: the current floor is strongest, but every
+        // floor keeps a visible response so the building reads as one instrument.
+        const floorStrength = Math.max(0.46, 1 - floorDistance * 0.055);
+        const phase = surface.floor * 0.57 + t * (0.7 + reaction.propagation * 1.9);
+        const pulse = Math.max(0, Math.sin(phase * 1.8)) * 0.5 + 0.5;
+        const displacement = reaction.displacement * floorStrength * (0.72 + pulse * 0.62);
+        const bloom = reaction.bloom * floorStrength * (0.74 + pulse * 0.4);
+        const lineDensity = reaction.lineDensity * floorStrength * (0.78 + pulse * 0.42);
+
+        surface.panelMaterial.uniforms.uTime.value = t - surface.floor * 0.17;
+        surface.panelMaterial.uniforms.uDisplacement.value = displacement;
+        surface.panelMaterial.uniforms.uColorShift.value = reaction.colorShift + surface.floor * 0.018;
+        surface.panelMaterial.uniforms.uLineDensity.value = lineDensity;
+        surface.panelMaterial.uniforms.uBloom.value = bloom;
+        surface.panelMaterial.uniforms.uPulse.value = reaction.pulse * floorStrength;
+        surface.panelMaterial.uniforms.uPropagation.value = reaction.propagation * floorStrength;
+
+        surface.stripMeshes.forEach((mesh, index) => {
+          const stripWave = Math.sin(t * (2.2 + reaction.propagation * 3.8) - index * 0.72 + surface.floor * 0.4);
+          mesh.position.x = -0.52 + index * 0.17 + stripWave * (0.012 + displacement * 0.035);
+          mesh.scale.y = 0.82 + (stripWave * 0.5 + 0.5) * (0.18 + reaction.pulse * 0.28);
+        });
+        surface.stripMaterials.forEach((material, index) => {
+          const hue = 0.48 - reaction.colorShift * 0.14 + index * 0.005 + surface.floor * 0.006;
+          material.emissive.setHSL(hue, 0.78, 0.38);
+          material.emissiveIntensity = 0.32 + bloom * 3.8;
+          material.opacity = 0.18 + lineDensity * 0.78;
+        });
+
+        surface.rippleMeshes.forEach((ripple, index) => {
+          const ripplePhase = (t * (0.32 + reaction.propagation * 0.72) + index * 0.28 + surface.floor * 0.11) % 1;
+          ripple.position.y = -0.95 + ripplePhase * 1.9;
+          ripple.scale.setScalar(0.22 + ripplePhase * 0.7 + reaction.pulse * 0.48);
+          surface.rippleMaterials[index].opacity = (1 - ripplePhase) * (0.12 + bloom * 0.58);
+          surface.rippleMaterials[index].color.setHSL(0.16 - reaction.colorShift * 0.08 + surface.floor * 0.004, 0.9, 0.62);
+        });
+
+        const particleAttribute = surface.particleGeometry.getAttribute("position") as THREE.BufferAttribute;
+        for (let index = 0; index < surface.particlePhases.length; index += 1) {
+          const baseIndex = index * 3;
+          const phaseOffset = surface.particlePhases[index];
+          const rise = ((surface.particleBase[baseIndex + 1] + 0.99 + t * (0.035 + reaction.propagation * 0.19) + phaseOffset * 1.98) % 1.98) - 0.99;
+          particleAttribute.array[baseIndex] = surface.particleBase[baseIndex] + Math.sin(t * 1.4 + phaseOffset * 8 + index) * (0.018 + reaction.particleEmission * 0.075);
+          particleAttribute.array[baseIndex + 1] = rise;
+          particleAttribute.array[baseIndex + 2] = surface.particleBase[baseIndex + 2] + Math.cos(t * 1.1 + phaseOffset * 7) * (0.012 + reaction.pulse * 0.035);
+        }
+        particleAttribute.needsUpdate = true;
+        surface.particleMaterial.opacity = 0.08 + reaction.particleEmission * floorStrength * 1.12;
+        surface.particleMaterial.size = 0.024 + reaction.particleEmission * floorStrength * 0.07;
       });
+
+      let cameraBob = 0;
       if (cameraCommandRef.current === "walk") {
         controls.enabled = false;
         const player = playerRef.current;
-        const navigation = navigationRef.current;
         if (navigation.mode === "stairs") {
           const transitionProgress = THREE.MathUtils.clamp(
-            (performance.now() - navigation.transitionStarted) / 980,
+            (performance.now() - navigation.transitionStarted) / navigation.transitionDuration,
             0,
             1,
           );
+          const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
           player.position.y = THREE.MathUtils.lerp(
             navigation.transitionFromY,
             navigation.transitionToY,
-            transitionProgress,
+            eased,
           );
-          player.position.z = -2.25 + navigation.transitionArcDirection * Math.sin(transitionProgress * Math.PI) * 0.88;
+          player.position.x = THREE.MathUtils.lerp(navigation.transitionFromX, navigation.transitionStairX, eased);
+          player.position.z = THREE.MathUtils.lerp(navigation.transitionFromZ, navigation.transitionToZ, eased)
+            + navigation.transitionArcDirection * Math.sin(transitionProgress * Math.PI) * 0.88;
+          cameraBob = Math.sin(transitionProgress * Math.PI * 8) * 0.055 + Math.sin(transitionProgress * Math.PI) * 0.025;
           if (transitionProgress >= 1) {
             player.floor = navigation.transitionTargetFloor;
             navigation.floor = player.floor;
             navigation.mode = "walking";
+            player.position.x = navigation.transitionStairX;
+            player.position.z = navigation.transitionToZ;
+            collidersRef.current = createCorridorColliders(player.floor, {
+              openInterconnect: player.floor === 8 || player.floor === 10,
+            });
             onWalkFloorChangeRef.current(player.floor);
             setNavigationMessage(`已到达 ${player.floor}F · WASD 行走`);
           }
@@ -944,6 +1107,7 @@ export default function BuildingScene({
           );
           player.position.x = unitX(navigation.elevatorUnit) + (navigation.elevatorUnit === 1 ? 3.15 : -3.15);
           player.position.z = -2.25;
+          cameraBob = Math.sin(transitionProgress * Math.PI * 6) * 0.025;
           if (transitionProgress >= 1) {
             player.floor = navigation.transitionTargetFloor;
             navigation.floor = player.floor;
@@ -957,19 +1121,49 @@ export default function BuildingScene({
           player.position.y = yForFloor(player.floor) + 0.38;
           if (navigation.mode === "walking") {
             const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
+            const elevatorHall = nearestSpatialNode(player.position, "elevatorHall", navigation.floor);
+            if (fpsPointerLockedRef.current && movementKeysRef.current.size === 0) {
+              if (elevatorHall) {
+                setNavigationMessage("E 开门");
+              } else if (stair) {
+                setNavigationMessage("W 上楼 · S 下楼");
+              } else {
+                setNavigationMessage("WASD 行走 · 鼠标转向 · E 互动");
+              }
+            }
             const stairDirection = movementKeysRef.current.has("w")
               ? 1
               : movementKeysRef.current.has("s")
                 ? -1
                 : null;
-            if (stair && stairDirection !== null) {
+            const stairDelta = stair
+              ? new THREE.Vector2(stair.position[0] - player.position.x, stair.position[2] - player.position.z)
+              : null;
+            const stairMotion = stairDirection === 1
+              ? movementVector(player.yaw, { forward: true })
+              : stairDirection === -1
+                ? movementVector(player.yaw, { backward: true })
+                : { x: 0, z: 0 };
+            const enteringStair = Boolean(
+              stair
+              && stairDelta
+              && (stairDelta.length() < 0.55
+                || stairMotion.x * stairDelta.x + stairMotion.z * stairDelta.y > 0.2),
+            );
+            if (stair && stairDirection !== null && enteringStair) {
               startStairTransition(stairDirection);
             } else {
-              updateKeyboardPlayer(player, movementKeysRef.current, delta);
+              const moved = updateKeyboardPlayer(player, movementKeysRef.current, delta, collidersRef.current);
+              if (moved) {
+                locomotionPhaseRef.current += delta * (movementKeysRef.current.has("shift") ? 13 : 9);
+                cameraBob = Math.sin(locomotionPhaseRef.current * 2) * 0.042;
+              } else {
+                locomotionPhaseRef.current *= 0.88;
+              }
             }
           }
         }
-        applyFirstPersonCamera(camera, player);
+        applyFirstPersonCamera(camera, player, cameraBob);
       } else {
         controls.enabled = true;
         controls.update();
@@ -1001,29 +1195,6 @@ export default function BuildingScene({
       if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    resonanceSurfacesRef.current.forEach((surface) => {
-      const floorFocus = surface.floor === walkFloor ? 1 : 0.22;
-      surface.panelMaterial.uniforms.uDisplacement.value = wallReaction.displacement * floorFocus;
-      surface.panelMaterial.uniforms.uColorShift.value = wallReaction.colorShift;
-      surface.panelMaterial.uniforms.uLineDensity.value = wallReaction.lineDensity * floorFocus;
-      surface.panelMaterial.uniforms.uBloom.value = wallReaction.bloom * floorFocus;
-      surface.stripMaterials.forEach((material, index) => {
-        material.emissive.setHSL(0.48 - wallReaction.colorShift * 0.14 + index * 0.005, 0.72, 0.34);
-        material.emissiveIntensity = 0.16 + wallReaction.bloom * floorFocus * 2.2;
-        material.opacity = 0.12 + wallReaction.lineDensity * floorFocus * 0.62;
-      });
-      surface.particleMaterial.opacity = 0.03 + wallReaction.particleEmission * floorFocus * 0.82;
-      surface.particleMaterial.size = 0.018 + wallReaction.particleEmission * floorFocus * 0.045;
-      surface.rippleMeshes.forEach((ripple, index) => {
-        const pulse = wallReaction.displacement * floorFocus * (1 + index * 0.24) + wallReaction.bloom * floorFocus * 0.42;
-        ripple.scale.setScalar(0.5 + index * 0.22 + pulse * 1.35);
-        surface.rippleMaterials[index].opacity = 0.04 + wallReaction.bloom * floorFocus * (0.38 - index * 0.06);
-        surface.rippleMaterials[index].color.setHSL(0.16 - wallReaction.colorShift * 0.08, 0.86, 0.58);
-      });
-    });
-  }, [wallReaction, walkFloor]);
 
   useEffect(() => {
     const marker = markerRef.current;
@@ -1157,6 +1328,11 @@ export default function BuildingScene({
           {fpsPointerLocked && <div className="fps-crosshair" aria-hidden="true" />}
           <div className="walk-status" role="status">
             <span className="eyebrow">FPS NAVIGATION</span>
+            <div className="walk-status-meta">
+              <strong>{walkFloor}F</strong>
+              <span>{floorAVReactionFor(walkFloor).label}</span>
+              <span>{fpsPointerLocked ? "鼠标已锁定" : "鼠标未锁定"}</span>
+            </div>
             <b>{navigationMessage}</b>
           </div>
         </>
