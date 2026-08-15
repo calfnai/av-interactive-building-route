@@ -30,6 +30,7 @@ export interface MovementKeys {
 export interface CorridorColliderOptions {
   openElevator?: boolean;
   openInterconnect?: boolean;
+  openDoors?: ReadonlySet<string>;
 }
 
 export const PLAYER_RADIUS = 0.28;
@@ -74,20 +75,35 @@ export function createCorridorColliders(
   addCollider(colliders, `boundary-front-${floor}`, "boundary", WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Z - 0.3, WORLD_MIN_Z);
   addCollider(colliders, `boundary-back-${floor}`, "boundary", WORLD_MIN_X, WORLD_MAX_X, WORLD_MAX_Z, WORLD_MAX_Z + 0.3);
 
-  // Apartment blocks start behind the public corridor. The door faces remain
-  // visible, but the first-person prototype treats them as closed room fronts
-  // so the player cannot walk through rooms or the back wall.
+  // Apartment blocks start behind the public corridor. Each room has a real
+  // front threshold: opening its door removes only the matching gap while the
+  // room body and back wall remain collidable.
   for (const unit of [1, 2] as const) {
     const center = unitCenter(unit);
-    addCollider(
-      colliders,
-      `rooms-${floor}-unit-${unit}`,
-      "room",
-      center - UNIT_WIDTH / 2 + 0.12,
-      center + UNIT_WIDTH / 2 - 0.12,
-      2.05,
-      WORLD_MAX_Z,
-    );
+    const roomCenters = [-2.15, 0, 2.15].map((offset) => center + offset);
+    const doorCenters = [-1.65, 0, 1.65].map((offset) => center + offset);
+    roomCenters.forEach((roomCenter, index) => {
+      const roomMinX = roomCenter - 0.94;
+      const roomMaxX = roomCenter + 0.94;
+      const doorId = `u${unit}-f${floor}-door-${["a", "b", "c"][index]}`;
+      const doorCenter = doorCenters[index];
+      const doorOpen = options.openDoors?.has(doorId) ?? false;
+      const gapHalfWidth = 0.42;
+
+      if (!doorOpen) {
+        addCollider(colliders, `${doorId}-threshold`, "door", roomMinX, roomMaxX, 2.02, 2.32);
+      } else {
+        addCollider(colliders, `${doorId}-threshold-left`, "wall", roomMinX, doorCenter - gapHalfWidth, 2.02, 2.32);
+        addCollider(colliders, `${doorId}-threshold-right`, "wall", doorCenter + gapHalfWidth, roomMaxX, 2.02, 2.32);
+      }
+      if (doorOpen) {
+        addCollider(colliders, `${doorId}-room-side-left`, "wall", roomMinX - 0.16, roomMinX, 2.32, 4.18);
+        addCollider(colliders, `${doorId}-room-side-right`, "wall", roomMaxX, roomMaxX + 0.16, 2.32, 4.18);
+        addCollider(colliders, `${doorId}-room-back`, "room", roomMinX, roomMaxX, 4.18, WORLD_MAX_Z);
+      } else {
+        addCollider(colliders, `${doorId}-room-body`, "room", roomMinX, roomMaxX, 2.32, WORLD_MAX_Z);
+      }
+    });
   }
 
   // The central bridge is only a valid connection on the authored open

@@ -37,10 +37,13 @@ test("corridor collision resolves independently on X and Z", () => {
 test("open interconnect and room blockers remain explicit", () => {
   const closed = createCorridorColliders(6);
   const open = createCorridorColliders(8, { openInterconnect: true });
+  const openRoom = createCorridorColliders(8, { openDoors: new Set(["u1-f8-door-a"]) });
   assert.ok(closed.some((collider) => collider.kind === "door"));
-  assert.equal(open.some((collider) => collider.kind === "door"), false);
+  assert.equal(open.some((collider) => collider.id === "interconnect-door-8"), false);
   assert.ok(open.some((collider) => collider.kind === "room"));
   assert.ok(open.some((collider) => collider.kind === "shaft"));
+  assert.equal(openRoom.some((collider) => collider.id === "u1-f8-door-a-threshold"), false);
+  assert.ok(openRoom.some((collider) => collider.id === "u1-f8-door-a-room-back"));
 });
 
 test("wall reaction separates low, mid and high frequency behavior", () => {

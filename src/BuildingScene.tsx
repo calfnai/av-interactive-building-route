@@ -12,6 +12,7 @@ import {
   SPATIAL_NODES,
   unitX,
   yForFloor,
+  type AccessState,
   type RouteEvent,
   type Vec3,
 } from "./spatial-data";
@@ -48,6 +49,7 @@ const palette = {
   unit1: 0x60d5c8,
   unit2: 0x68a4ff,
   room: 0x28343a,
+  wall: 0x334951,
   stair: 0xd2c4a7,
   elevator: 0xc3a7ff,
   route: 0xf2ff63,
@@ -273,6 +275,7 @@ function addDoor(group: THREE.Group, position: Vec3, locked: boolean, label: str
   const sprite = createTextSprite(locked ? `LOCKED · ${label}` : `OPEN · ${label}`, locked ? "#ff8b78" : "#75f0c7", 0.7);
   sprite.position.set(position[0], position[1] + 1.05, position[2]);
   group.add(sprite);
+  return door;
 }
 
 function addFlatDoor(
@@ -326,12 +329,31 @@ interface ResonanceSurface {
   rippleMaterials: THREE.MeshBasicMaterial[];
 }
 
-function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: number, showLabel = false): ResonanceSurface {
+interface InteractiveDoor {
+  id: string;
+  mesh: THREE.Mesh;
+  floor: number;
+  position: Vec3;
+  access: AccessState;
+  label: string;
+  kind: "room" | "interconnect" | "side" | "stair" | "elevator";
+  open: boolean;
+}
+
+function createResonanceSurface(
+  scene: THREE.Scene,
+  position: Vec3,
+  floor: number,
+  showLabel = false,
+  rotationY = 0,
+  width = 1.62,
+): ResonanceSurface {
   const group = new THREE.Group();
   group.position.set(...position);
+  group.rotation.y = rotationY;
   const theme = floorAVReactionFor(floor);
 
-  addBox(group, [1.62, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
+  addBox(group, [width, 2.22, 0.1], [0, 0, -0.06], 0x17262b, 0.96);
   const panelMaterial = new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
@@ -386,14 +408,20 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
     side: THREE.DoubleSide,
     depthWrite: false,
   });
-  const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 2.1, 18, 36), panelMaterial);
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(width * 0.84, 2.1, 18, 36), panelMaterial);
   panel.position.z = 0.01;
   group.add(panel);
 
   const stripMaterials: THREE.MeshStandardMaterial[] = [];
   const stripMeshes: THREE.Mesh[] = [];
   for (let index = 0; index < 7; index += 1) {
-    const strip = addBox(group, [0.025, 1.88, 0.035], [-0.52 + index * 0.17, 0, 0.075], 0x6de0d0, 0.34);
+    const strip = addBox(
+      group,
+      [Math.max(0.012, width * 0.016), 1.88, 0.035],
+      [-width * 0.32 + index * width * 0.107, 0, 0.075],
+      0x6de0d0,
+      0.34,
+    );
     stripMeshes.push(strip);
     stripMaterials.push(strip.material as THREE.MeshStandardMaterial);
   }
@@ -423,7 +451,7 @@ function createResonanceSurface(scene: THREE.Scene, position: Vec3, floor: numbe
   const particlePhases = new Float32Array(particleCount);
   for (let index = 0; index < particleCount; index += 1) {
     const seed = index * 17.731;
-    particleBase[index * 3] = ((Math.sin(seed) * 0.5 + 0.5) - 0.5) * 1.35;
+    particleBase[index * 3] = ((Math.sin(seed) * 0.5 + 0.5) - 0.5) * width * 0.84;
     particleBase[index * 3 + 1] = ((Math.sin(seed * 1.7) * 0.5 + 0.5) - 0.5) * 1.98;
     particleBase[index * 3 + 2] = 0.12 + (Math.sin(seed * 2.3) * 0.5 + 0.5) * 0.06;
     particlePositions[index * 3] = particleBase[index * 3];
@@ -492,6 +520,8 @@ export default function BuildingScene({
   const wallReactionRef = useRef(wallReaction);
   const locomotionPhaseRef = useRef(0);
   const elevatorDoorsRef = useRef<Map<string, THREE.Mesh>>(new Map());
+  const interactiveDoorsRef = useRef<Map<string, InteractiveDoor>>(new Map());
+  const openDoorIdsRef = useRef(new Set<string>());
   const cameraCommandRef = useRef(cameraCommand);
   const onWalkFloorChangeRef = useRef(onWalkFloorChange);
   const initialPlayerPosition = SPATIAL_NODES.find(
@@ -501,7 +531,9 @@ export default function BuildingScene({
     // Start in the public corridor, not inside the stair trigger. The player
     // must deliberately walk to a stair mouth before a vertical transition.
     position: toVector(initialPlayerPosition),
-    yaw: Math.PI,
+    // Face the corridor wall and apartment doors on spawn so the sound-wall
+    // system is immediately visible before the player starts moving.
+    yaw: 0,
     pitch: 0,
     floor: walkFloor,
   });
@@ -550,12 +582,63 @@ export default function BuildingScene({
     }
     collidersRef.current = createCorridorColliders(walkFloor, {
       openInterconnect: walkFloor === 8 || walkFloor === 10,
+      openDoors: openDoorIdsRef.current,
     });
   }, [walkFloor]);
+
+  const refreshCorridorColliders = () => {
+    const navigation = navigationRef.current;
+    collidersRef.current = createCorridorColliders(navigation.floor, {
+      openInterconnect: navigation.floor === 8 || navigation.floor === 10 || openDoorIdsRef.current.has(`f${navigation.floor}-interconnect`),
+      openElevator: ["elevator-open", "elevator-inside", "elevator-arrived"].includes(navigation.mode),
+      openDoors: openDoorIdsRef.current,
+    });
+  };
+
+  const setDoorOpen = (doorId: string, open: boolean) => {
+    const door = interactiveDoorsRef.current.get(doorId);
+    if (!door) return;
+    door.open = open;
+    door.mesh.userData.openTarget = open ? 0.06 : 1;
+    if (open) openDoorIdsRef.current.add(doorId);
+    else openDoorIdsRef.current.delete(doorId);
+    refreshCorridorColliders();
+  };
 
   const setElevatorDoor = (unit: 1 | 2, floor: number, open: boolean) => {
     const door = elevatorDoorsRef.current.get(`${unit}-${floor}`);
     if (door) door.scale.x = open ? 0.06 : 1;
+    setDoorOpen(`u${unit}-f${floor}-elevator-door`, open);
+  };
+
+  const nearestInteractiveDoor = (position: THREE.Vector3, floor: number, includeElevator = false) => {
+    let nearest: InteractiveDoor | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const door of interactiveDoorsRef.current.values()) {
+      if (door.floor !== floor || (!includeElevator && door.kind === "elevator")) continue;
+      const distance = Math.hypot(door.position[0] - position.x, door.position[2] - position.z);
+      if (distance < nearestDistance) {
+        nearest = door;
+        nearestDistance = distance;
+      }
+    }
+    return nearestDistance < 1.45 ? nearest : null;
+  };
+
+  const interactWithNearestDoor = () => {
+    const navigation = navigationRef.current;
+    const player = playerRef.current;
+    const door = nearestInteractiveDoor(player.position, navigation.floor);
+    if (!door) {
+      setNavigationMessage("请走到门前，再按 E 互动");
+      return;
+    }
+    if (door.access === "locked" || door.access === "card") {
+      setNavigationMessage(`${door.label} 已锁定，不能打开`);
+      return;
+    }
+    setDoorOpen(door.id, !door.open);
+    setNavigationMessage(door.open ? `${door.label} 已打开` : `${door.label} 已关闭`);
   };
 
   const startStairTransition = (direction: 1 | -1) => {
@@ -639,7 +722,9 @@ export default function BuildingScene({
       }
 
       if (key === "e" && navigation.mode === "walking") {
-        beginElevatorCall();
+        const elevatorHall = nearestSpatialNode(player.position, "elevatorHall", navigation.floor);
+        if (elevatorHall) beginElevatorCall();
+        else interactWithNearestDoor();
         event.preventDefault();
         return;
       }
@@ -807,6 +892,27 @@ export default function BuildingScene({
 
     const building = new THREE.Group();
     scene.add(building);
+    const wallSurfaceSpecs: Array<{
+      position: Vec3;
+      floor: number;
+      rotationY: number;
+      width: number;
+      showLabel: boolean;
+    }> = [];
+    interactiveDoorsRef.current.clear();
+    openDoorIdsRef.current.clear();
+    const registerInteractiveDoor = (
+      id: string,
+      mesh: THREE.Mesh,
+      floor: number,
+      position: Vec3,
+      access: AccessState,
+      label: string,
+      kind: InteractiveDoor["kind"],
+    ) => {
+      mesh.userData.openTarget = 1;
+      interactiveDoorsRef.current.set(id, { id, mesh, floor, position, access, label, kind, open: false });
+    };
 
     for (const floor of FLOORS) {
       const floorGroup = new THREE.Group();
@@ -814,6 +920,7 @@ export default function BuildingScene({
       focusGroupsRef.current.set(floor, floorGroup);
       building.add(floorGroup);
       const y = yForFloor(floor);
+      let floorLabelPlaced = false;
 
       for (const unit of [1, 2] as const) {
         const x = unitX(unit);
@@ -841,6 +948,15 @@ export default function BuildingScene({
             floor === 6 && unit === 1 ? "6F Elevator Door" : undefined,
           );
           elevatorDoorsRef.current.set(`${unit}-${floor}`, elevatorDoor);
+          registerInteractiveDoor(
+            `u${unit}-f${floor}-elevator-door`,
+            elevatorDoor,
+            floor,
+            [elevatorX, y + 0.72, -1.43],
+            unit === 1 ? "card" : "conditional",
+            `${unit} 单元 ${floor}F 电梯门`,
+            "elevator",
+          );
         }
 
         for (let room = 0; room < 3; room += 1) {
@@ -849,7 +965,7 @@ export default function BuildingScene({
           const doorNode = SPATIAL_NODES.find((node) => node.id === doorId);
           const locked = doorNode?.access === "locked";
           const keyed = doorNode?.access === "key";
-          addFlatDoor(
+          const apartmentDoor = addFlatDoor(
             floorGroup,
             [x + (room - 1) * 1.65, y + 0.68, 2.02],
             0.7,
@@ -857,7 +973,89 @@ export default function BuildingScene({
             keyed ? 0xf2ff63 : palette.open,
             keyed ? "Key Door" : undefined,
           );
+          registerInteractiveDoor(
+            doorId,
+            apartmentDoor,
+            floor,
+            [x + (room - 1) * 1.65, y + 0.68, 2.02],
+            doorNode?.access ?? "locked",
+            `${unit} 单元 ${floor}F ${["A", "B", "C"][room]} 户门`,
+            "room",
+          );
         }
+
+        // Continuous corridor wall bays make the floor read as architecture,
+        // not as a collection of isolated obstacle blocks. Every bay gets a
+        // resonance surface so SAMPLE propagates across the whole floor.
+        const wallMin = x - 5.35;
+        const wallMax = x + 5.35;
+        const doorCenters = [-1.65, 0, 1.65].map((offset) => x + offset);
+        const doorGap = 0.48;
+        let wallStart = wallMin;
+        doorCenters.forEach((doorCenter) => {
+          const wallEnd = doorCenter - doorGap;
+          if (wallEnd - wallStart > 0.12) {
+            const width = wallEnd - wallStart;
+            const panelCount = Math.max(1, Math.ceil(width / 1.72));
+            for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+              const panelStart = wallStart + (width * panelIndex) / panelCount;
+              const panelEnd = wallStart + (width * (panelIndex + 1)) / panelCount;
+              const panelWidth = panelEnd - panelStart;
+              addBox(
+                floorGroup,
+                [panelWidth, 1.82, 0.14],
+                [(panelStart + panelEnd) * 0.5, y + 0.91, 2.16],
+                palette.wall,
+                0.78,
+              );
+              const showLabel = !floorLabelPlaced;
+              floorLabelPlaced = true;
+              wallSurfaceSpecs.push({
+                position: [(panelStart + panelEnd) * 0.5, y + 1.0, 2.07],
+                floor,
+                rotationY: 0,
+                width: Math.max(0.36, Math.min(panelWidth - 0.12, 1.56)),
+                showLabel,
+              });
+            }
+          }
+          wallStart = doorCenter + doorGap;
+        });
+        if (wallMax - wallStart > 0.12) {
+          const width = wallMax - wallStart;
+          const panelCount = Math.max(1, Math.ceil(width / 1.72));
+          for (let panelIndex = 0; panelIndex < panelCount; panelIndex += 1) {
+            const panelStart = wallStart + (width * panelIndex) / panelCount;
+            const panelEnd = wallStart + (width * (panelIndex + 1)) / panelCount;
+            const panelWidth = panelEnd - panelStart;
+            addBox(
+              floorGroup,
+              [panelWidth, 1.82, 0.14],
+              [(panelStart + panelEnd) * 0.5, y + 0.91, 2.16],
+              palette.wall,
+              0.78,
+            );
+            const showLabel = !floorLabelPlaced;
+            floorLabelPlaced = true;
+            wallSurfaceSpecs.push({
+              position: [(panelStart + panelEnd) * 0.5, y + 1.0, 2.07],
+              floor,
+              rotationY: 0,
+              width: Math.max(0.36, Math.min(panelWidth - 0.12, 1.56)),
+              showLabel,
+            });
+          }
+        }
+
+        const outerWallX = unit === 1 ? x - 5.5 : x + 5.5;
+        addBox(floorGroup, [0.14, 1.82, 5.5], [outerWallX, y + 0.91, -0.65], palette.wall, 0.72);
+        wallSurfaceSpecs.push({
+          position: [outerWallX + (unit === 1 ? 0.08 : -0.08), y + 1.0, -0.85],
+          floor,
+          rotationY: unit === 1 ? Math.PI / 2 : -Math.PI / 2,
+          width: 2.1,
+          showLabel: false,
+        });
 
         const unitLabel = createTextSprite(`Unit ${unit} · ${floor}F`, unit === 1 ? "#7ce0d5" : "#7eb1ff", 0.78);
         unitLabel.position.set(x, y + 1.55, -0.1);
@@ -866,14 +1064,41 @@ export default function BuildingScene({
 
       addBox(floorGroup, [3.2, 0.1, 1.05], [0, y, 0], palette.floorEdge, 0.46);
       const bridgeLocked = floor !== 8 && floor !== 10;
-      addDoor(floorGroup, [0, y + 0.78, 0], bridgeLocked, `${floor}F Link Door`);
+      const interconnectDoor = addDoor(floorGroup, [0, y + 0.78, 0], bridgeLocked, `${floor}F Link Door`);
+      registerInteractiveDoor(
+        `f${floor}-interconnect`,
+        interconnectDoor,
+        floor,
+        [0, y + 0.78, 0],
+        bridgeLocked ? "locked" : "open",
+        `${floor}F 单元连通门`,
+        "interconnect",
+      );
 
       if (floor === 10) {
-        addDoor(floorGroup, [-9.05, y + 0.78, -1.72], true, "Unit 1 10F Stair Door");
+        const stairDoor = addDoor(floorGroup, [-9.05, y + 0.78, -1.72], true, "Unit 1 10F Stair Door");
+        registerInteractiveDoor(
+          "u1-f10-stair-door",
+          stairDoor,
+          floor,
+          [-9.05, y + 0.78, -1.72],
+          "locked",
+          "1 单元 10F 楼梯门",
+          "stair",
+        );
       }
 
       if (floor === 1) {
-        addDoor(floorGroup, [-10.8, y + 0.78, 0.4], false, "Unit 1 1F Side Door");
+        const sideDoor = addDoor(floorGroup, [-10.8, y + 0.78, 0.4], false, "Unit 1 1F Side Door");
+        registerInteractiveDoor(
+          "u1-f1-side-door",
+          sideDoor,
+          floor,
+          [-10.8, y + 0.78, 0.4],
+          "open",
+          "1 单元 1F 侧门",
+          "side",
+        );
       }
     }
 
@@ -890,26 +1115,14 @@ export default function BuildingScene({
     grid.position.y = -0.15;
     scene.add(grid);
 
-    resonanceSurfacesRef.current = FLOORS.flatMap((floor) => [
-      createResonanceSurface(
-        scene,
-        [unitX(1) + 1.0, yForFloor(floor) + 1.2, -3.5],
-        floor,
-        false,
-      ),
-      createResonanceSurface(
-        scene,
-        [0, yForFloor(floor) + 1.2, -1.15],
-        floor,
-        true,
-      ),
-      createResonanceSurface(
-        scene,
-        [unitX(2) - 1.0, yForFloor(floor) + 1.2, -3.5],
-        floor,
-        false,
-      ),
-    ]);
+    resonanceSurfacesRef.current = wallSurfaceSpecs.map((spec) => createResonanceSurface(
+      scene,
+      spec.position,
+      spec.floor,
+      spec.showLabel,
+      spec.rotationY,
+      spec.width,
+    ));
 
     const nodeById = new Map(SPATIAL_NODES.map((node) => [node.id, node]));
     const graphGroup = new THREE.Group();
@@ -1061,6 +1274,10 @@ export default function BuildingScene({
         surface.particleMaterial.opacity = 0.08 + reaction.particleEmission * floorStrength * 1.12;
         surface.particleMaterial.size = 0.024 + reaction.particleEmission * floorStrength * 0.07;
       });
+      interactiveDoorsRef.current.forEach((door) => {
+        const targetScale = typeof door.mesh.userData.openTarget === "number" ? door.mesh.userData.openTarget : 1;
+        door.mesh.scale.x = THREE.MathUtils.lerp(door.mesh.scale.x, targetScale, Math.min(1, delta * 10));
+      });
 
       let cameraBob = 0;
       if (cameraCommandRef.current === "walk") {
@@ -1122,9 +1339,16 @@ export default function BuildingScene({
           if (navigation.mode === "walking") {
             const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
             const elevatorHall = nearestSpatialNode(player.position, "elevatorHall", navigation.floor);
+            const nearbyDoor = nearestInteractiveDoor(player.position, navigation.floor);
             if (fpsPointerLockedRef.current && movementKeysRef.current.size === 0) {
               if (elevatorHall) {
                 setNavigationMessage("E 开门");
+              } else if (nearbyDoor) {
+                setNavigationMessage(
+                  nearbyDoor.access === "locked" || nearbyDoor.access === "card"
+                    ? `${nearbyDoor.label} 已锁定`
+                    : `E ${nearbyDoor.open ? "关门" : "开门"} · ${nearbyDoor.label}`,
+                );
               } else if (stair) {
                 setNavigationMessage("W 上楼 · S 下楼");
               } else {
@@ -1192,6 +1416,8 @@ export default function BuildingScene({
       focusGroupsRef.current.clear();
       resonanceSurfacesRef.current = [];
       elevatorDoorsRef.current.clear();
+      interactiveDoorsRef.current.clear();
+      openDoorIdsRef.current.clear();
       if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
     };
   }, []);
