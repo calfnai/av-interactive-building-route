@@ -176,7 +176,8 @@ function updateKeyboardPlayer(player: PlayerState, keys: Set<string>, delta: num
   if (keys.has("a")) movement.sub(right);
   if (!movement.lengthSq()) return;
 
-  movement.normalize().multiplyScalar(Math.min(delta, 0.05) * 3.6);
+  const speed = keys.has("shift") ? 5.1 : 3.6;
+  movement.normalize().multiplyScalar(Math.min(delta, 0.05) * speed);
   player.position.x = THREE.MathUtils.clamp(player.position.x + movement.x, -12.4, 12.4);
   player.position.z = THREE.MathUtils.clamp(player.position.z + movement.z, -5.2, 5.2);
 }
@@ -443,7 +444,7 @@ export default function BuildingScene({
     floor: walkFloor,
   });
   const movementKeysRef = useRef(new Set<string>());
-  const mouseLookRef = useRef(false);
+  const fpsPointerLockedRef = useRef(false);
   const navigationRef = useRef<NavigationState>({
     mode: "walking",
     floor: walkFloor,
@@ -456,7 +457,8 @@ export default function BuildingScene({
     transitionArcDirection: 0,
   });
   const elevatorTimeoutRef = useRef<number | null>(null);
-  const [navigationMessage, setNavigationMessage] = useState("WASD 行走 · 靠近楼梯按 W 上行");
+  const [fpsPointerLocked, setFpsPointerLocked] = useState(false);
+  const [navigationMessage, setNavigationMessage] = useState("点击画面锁定鼠标 · WASD 行走");
 
   cameraCommandRef.current = cameraCommand;
   onWalkFloorChangeRef.current = onWalkFloorChange;
@@ -539,9 +541,11 @@ export default function BuildingScene({
       if (editableTarget(event.target)) return;
       const key = event.key.toLowerCase();
       if (cameraCommandRef.current !== "walk") return;
+      if (!fpsPointerLockedRef.current) return;
       const navigation = navigationRef.current;
       const player = playerRef.current;
-      const isMovementKey = ["w", "a", "s", "d"].includes(key);
+      const isMovementKey = ["w", "a", "s", "d", "shift"].includes(key);
+      const isDirectionalKey = ["w", "a", "s", "d"].includes(key);
       const numericFloor = event.key === "0" ? 10 : Number(event.key);
 
       if (navigation.mode === "elevator-inside" && numericFloor >= 1 && numericFloor <= 10) {
@@ -591,7 +595,7 @@ export default function BuildingScene({
         return;
       }
 
-      if (navigation.mode === "elevator-arrived" && isMovementKey) {
+      if (navigation.mode === "elevator-arrived" && isDirectionalKey) {
         const hall = SPATIAL_NODES.find(
           (node) => node.kind === "elevatorHall" && node.unit === navigation.elevatorUnit && node.floor === navigation.floor,
         );
@@ -611,15 +615,6 @@ export default function BuildingScene({
       if (["stairs", "elevator-opening", "elevator-riding"].includes(navigation.mode)) {
         if (isMovementKey || key === "e") event.preventDefault();
         return;
-      }
-
-      if (navigation.mode === "walking" && (key === "w" || key === "s")) {
-        const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
-        if (stair) {
-          startStairTransition(key === "w" ? 1 : -1);
-          event.preventDefault();
-          return;
-        }
       }
 
       if (isMovementKey) {
@@ -669,21 +664,46 @@ export default function BuildingScene({
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.domElement.setAttribute("aria-label", "居民楼栋三维空间与人物行进轨迹");
+    renderer.domElement.tabIndex = 0;
     host.appendChild(renderer.domElement);
 
-    const onPointerDown = () => {
-      mouseLookRef.current = true;
+    const onCanvasClick = () => {
+      if (cameraCommandRef.current !== "walk") return;
+      try {
+        const lockRequest = renderer.domElement.requestPointerLock?.();
+        void Promise.resolve(lockRequest).catch(() => {
+          setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
+        });
+      } catch {
+        setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
+      }
     };
-    const onPointerUp = () => {
-      mouseLookRef.current = false;
+    const onPointerLockChange = () => {
+      const locked = document.pointerLockElement === renderer.domElement;
+      fpsPointerLockedRef.current = locked;
+      setFpsPointerLocked(locked);
+      renderer.domElement.classList.toggle("fps-canvas-locked", locked);
+      if (!locked) {
+        movementKeysRef.current.clear();
+        setNavigationMessage("点击画面锁定鼠标 · WASD 行走");
+      } else {
+        setNavigationMessage("WASD 行走 · 鼠标转向 · E 互动");
+      }
+    };
+    const onPointerLockError = () => {
+      fpsPointerLockedRef.current = false;
+      setFpsPointerLocked(false);
+      movementKeysRef.current.clear();
+      setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
     };
     const onPointerMove = (event: MouseEvent) => {
-      if (!mouseLookRef.current || cameraCommandRef.current !== "walk") return;
-      playerRef.current.yaw -= event.movementX * 0.004;
-      playerRef.current.pitch = THREE.MathUtils.clamp(playerRef.current.pitch - event.movementY * 0.003, -0.9, 0.75);
+      if (!fpsPointerLockedRef.current || cameraCommandRef.current !== "walk") return;
+      playerRef.current.yaw -= event.movementX * 0.0024;
+      playerRef.current.pitch = THREE.MathUtils.clamp(playerRef.current.pitch - event.movementY * 0.0024, -0.9, 0.75);
     };
-    renderer.domElement.addEventListener("mousedown", onPointerDown);
-    window.addEventListener("mouseup", onPointerUp);
+    renderer.domElement.addEventListener("click", onCanvasClick);
+    document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("pointerlockerror", onPointerLockError);
     window.addEventListener("mousemove", onPointerMove);
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -935,7 +955,19 @@ export default function BuildingScene({
         } else {
           player.floor = navigation.floor;
           player.position.y = yForFloor(player.floor) + 0.38;
-          if (navigation.mode === "walking") updateKeyboardPlayer(player, movementKeysRef.current, delta);
+          if (navigation.mode === "walking") {
+            const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
+            const stairDirection = movementKeysRef.current.has("w")
+              ? 1
+              : movementKeysRef.current.has("s")
+                ? -1
+                : null;
+            if (stair && stairDirection !== null) {
+              startStairTransition(stairDirection);
+            } else {
+              updateKeyboardPlayer(player, movementKeysRef.current, delta);
+            }
+          }
         }
         applyFirstPersonCamera(camera, player);
       } else {
@@ -949,9 +981,11 @@ export default function BuildingScene({
     return () => {
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
-      renderer.domElement.removeEventListener("mousedown", onPointerDown);
-      window.removeEventListener("mouseup", onPointerUp);
+      renderer.domElement.removeEventListener("click", onCanvasClick);
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("pointerlockerror", onPointerLockError);
       window.removeEventListener("mousemove", onPointerMove);
+      if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       controls.dispose();
       renderer.dispose();
       renderer.domElement.remove();
@@ -1059,6 +1093,9 @@ export default function BuildingScene({
     const camera = cameraRef.current;
     const controls = controlsRef.current;
     if (!camera || !controls) return;
+    if (cameraCommand !== "walk" && document.pointerLockElement) {
+      document.exitPointerLock();
+    }
     controls.enabled = cameraCommand !== "walk";
     if (cameraCommand === "top") {
       controls.minDistance = 12;
@@ -1116,10 +1153,13 @@ export default function BuildingScene({
         </div>
       )}
       {!rendererError && cameraCommand === "walk" && (
-        <div className="walk-status" role="status">
-          <span className="eyebrow">NAVIGATION</span>
-          <b>{navigationMessage}</b>
-        </div>
+        <>
+          {fpsPointerLocked && <div className="fps-crosshair" aria-hidden="true" />}
+          <div className="walk-status" role="status">
+            <span className="eyebrow">FPS NAVIGATION</span>
+            <b>{navigationMessage}</b>
+          </div>
+        </>
       )}
     </div>
   );

@@ -114,6 +114,11 @@ button {
   overflow: hidden;
 }
 
+.viewport.fps-mode .event-card,
+.viewport.fps-mode .legend {
+  display: none;
+}
+
 .scene-host {
   position: absolute;
   inset: 0;
@@ -124,6 +129,11 @@ button {
   width: 100%;
   height: 100%;
   outline: none;
+  cursor: crosshair;
+}
+
+.scene-host canvas.fps-canvas-locked {
+  cursor: none;
 }
 
 .scene-host-fallback {
@@ -184,6 +194,41 @@ button {
   font-weight: 500;
   letter-spacing: 0.02em;
   text-align: center;
+}
+
+.fps-crosshair {
+  position: absolute;
+  z-index: 13;
+  top: 50%;
+  left: 50%;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(234, 250, 97, 0.9);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(7, 13, 16, 0.7), 0 0 18px rgba(234, 250, 97, 0.28);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.fps-crosshair::before,
+.fps-crosshair::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: block;
+  background: var(--lime);
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.fps-crosshair::before {
+  width: 27px;
+  height: 1px;
+}
+
+.fps-crosshair::after {
+  width: 1px;
+  height: 27px;
 }
 
 .scene-fallback code {

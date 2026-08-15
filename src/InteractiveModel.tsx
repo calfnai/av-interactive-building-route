@@ -26,8 +26,8 @@ export default function InteractiveModel() {
   const [cameraCommand, setCameraCommand] = useState<CameraCommand>("walk");
   const [walkFloor, setWalkFloor] = useState(1);
   const [commandVersion, setCommandVersion] = useState(0);
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [handPanelCollapsed, setHandPanelCollapsed] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [handPanelCollapsed, setHandPanelCollapsed] = useState(true);
   const [lastHandCommand, setLastHandCommand] = useState("");
   const handController = useHandController();
   const audio = useAudioBands();
@@ -147,7 +147,11 @@ export default function InteractiveModel() {
     if (command === "walk" && progress >= 1) setProgress(0);
     setCameraCommand(command);
     setCommandVersion((value) => value + 1);
-    if (command === "walk") setPlaying(false);
+    if (command === "walk") {
+      setPlaying(false);
+      setPanelOpen(false);
+      setHandPanelCollapsed(true);
+    }
   };
 
   return (
@@ -168,7 +172,7 @@ export default function InteractiveModel() {
         </button>
       </header>
 
-      <section className={`viewport ${handPanelCollapsed ? "" : "hand-control-open"}`}>
+      <section className={`viewport ${handPanelCollapsed ? "" : "hand-control-open"} ${cameraCommand === "walk" ? "fps-mode" : ""}`}>
         <BuildingScene
           progress={progress}
           currentEvent={currentEvent}
