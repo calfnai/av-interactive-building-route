@@ -155,6 +155,10 @@ button {
   font-size: 11px;
 }
 
+.top-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.memory-entry { color: var(--lime); font-size: 11px; text-decoration: none; opacity: .84; }
+.memory-entry:hover { opacity: 1; }
+
 .scene-tools button.active {
   background: #dfe9e9;
   color: #11181b;

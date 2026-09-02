@@ -1,6 +1,8 @@
-# AV Interactive · 楼栋路径复刻器
+# AV Interactive · 楼栋路径互动项目
 
 一个基于 Three.js 的居民楼栋空间结构与人物轨迹原型。当前版本把建筑结构、空间连接、门禁状态与人物实际行进序列分开建模，为后续音画互动与 TouchDesigner 联动保留清晰接口。
+
+本项目包含两个交付面：本目录是主工程；同一 GitHub 仓库中的 `../av-interactive-github-pages/` 是公开演示版本，承载 MediaPipe 双手楼梯沙盘和浏览器端手势交互。它不是另一个 AV 项目。
 
 ## 本地启动
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import BuildingScene from "./BuildingScene";
 import { BLOCKED_EVENTS, CHAPTERS, ROUTE_EVENTS } from "./spatial-data";
 
@@ -80,9 +81,12 @@ export default function InteractiveModel() {
           <span><b>{ROUTE_EVENTS.length}</b> 轨迹事件</span>
           <span><b>{BLOCKED_EVENTS.length}</b> 硬阻隔</span>
         </div>
-        <button className="panel-toggle" onClick={() => setPanelOpen((value) => !value)} aria-expanded={panelOpen}>
-          {panelOpen ? "收起路径" : "展开路径"}
-        </button>
+        <div className="top-actions">
+          <Link className="memory-entry" href="/memory-palace">进入声音记忆宫殿 ↗</Link>
+          <button className="panel-toggle" onClick={() => setPanelOpen((value) => !value)} aria-expanded={panelOpen}>
+            {panelOpen ? "收起路径" : "展开路径"}
+          </button>
+        </div>
       </header>
 
       <section className="viewport">
@@ -197,4 +201,3 @@ export default function InteractiveModel() {
     </main>
   );
 }
-
