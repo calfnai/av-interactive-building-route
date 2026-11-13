@@ -2,16 +2,34 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BLOCKED_EVENTS,
+  FLOOR_HEIGHT,
   ROUTE_EVENTS,
   GHOST_ROUTES,
   SPATIAL_CONNECTIONS,
   SPATIAL_NODES,
+  STAIR_RUN,
+  stairDirection,
+  stairLandingZ,
+  stairRoutePosition,
 } from "../src/spatial-data.ts";
 
 test("building graph covers two units and ten floors", () => {
   assert.equal(SPATIAL_NODES.filter((node) => node.kind === "public").length, 20);
   assert.equal(SPATIAL_NODES.filter((node) => node.kind === "stair").length, 20);
   assert.equal(SPATIAL_NODES.find((node) => node.id === "u1-f2-elevator-hall"), undefined);
+});
+
+test("stair flights alternate direction and route landings span one full flight", () => {
+  for (const unit of [1, 2] as const) {
+    for (let floor = 1; floor < 10; floor += 1) {
+      const from = stairRoutePosition(unit, floor);
+      const to = stairRoutePosition(unit, floor + 1);
+      assert.equal(to[0], from[0]);
+      assert.ok(Math.abs(to[1] - from[1] - FLOOR_HEIGHT) < 1e-9);
+      assert.ok(Math.abs(to[2] - from[2] - stairDirection(unit, floor) * STAIR_RUN) < 1e-9);
+      assert.ok(Math.abs(Math.abs(stairLandingZ(unit, floor + 1) - stairLandingZ(unit, floor)) - STAIR_RUN) < 1e-9);
+    }
+  }
 });
 
 test("hard barriers cannot be traversed", () => {

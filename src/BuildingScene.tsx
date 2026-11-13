@@ -8,8 +8,10 @@ import {
   FLOOR_HEIGHT,
   FLOORS,
   ROUTE_EVENTS,
+  STAIR_RUN,
   SPATIAL_CONNECTIONS,
   SPATIAL_NODES,
+  stairDirection,
   unitX,
   yForFloor,
   type RouteEvent,
@@ -181,15 +183,14 @@ function addFlatDoor(
   }
 }
 
-function addStairSteps(group: THREE.Group, base: Vec3, unit: 1 | 2) {
-  const direction = unit === 1 ? -1 : 1;
+function addStairSteps(group: THREE.Group, base: Vec3, direction: -1 | 1) {
   const stepCount = 18;
   for (let index = 0; index < stepCount; index += 1) {
     const alpha = index / (stepCount - 1);
     addBox(
       group,
       [1.12, 0.08, 0.3],
-      [base[0], base[1] + alpha * FLOOR_HEIGHT, base[2] + direction * (-0.88 + alpha * 1.76)],
+      [base[0], base[1] + alpha * FLOOR_HEIGHT, base[2] + direction * (-STAIR_RUN / 2 + alpha * STAIR_RUN)],
       palette.stair,
       0.74,
     );
@@ -283,7 +284,7 @@ export default function BuildingScene({
 
         const stairPosition: Vec3 = [x + (unit === 1 ? -2.4 : 2.4), y, -2.25];
         addBox(floorGroup, [1.68, 0.08, 1.78], [stairPosition[0], y + 0.04, stairPosition[2]], palette.stair, 0.22, true);
-        if (floor < 10) addStairSteps(floorGroup, stairPosition, unit);
+        if (floor < 10) addStairSteps(floorGroup, stairPosition, stairDirection(unit, floor));
         if (!(unit === 1 && floor === 2)) {
           const elevatorX = x + (unit === 1 ? 2.7 : -2.7);
           addBox(floorGroup, [1.65, 1.8, 1.5], [elevatorX, y + 0.92, -2.25], palette.elevator, 0.2, true);

@@ -1,8 +1,10 @@
-# AV Interactive · GitHub Pages 版
+> **暂停开发（2026-11-13）**：当前进度已归档，详见 [ARCHIVE.md](ARCHIVE.md)。下文保留归档时的功能与运行记录。
 
-这是独立的纯 Vite + React + Three.js 网页工程，只负责楼栋模型和轨迹的公开演示。
+# AV Interactive · GitHub Pages 公开演示版
 
-它与原来的 TouchDesigner 工程、Sites/Vinext 实验工程完全分开，避免文件和发布方式相互影响。
+这是 `AV Interactive Building Route` 的公开演示交付面：纯 Vite + React + Three.js 网页工程，负责楼栋模型、轨迹公开演示和双手楼梯沙盘。
+
+它与主工程 `../av-interactive/` 使用同一个 GitHub 仓库，但保留独立的 Vite/Pages 构建边界；它与 TouchDesigner 工程、Sites/Vinext 实验工程分开，避免文件和发布方式相互影响。
 
 ## 本地运行
 
