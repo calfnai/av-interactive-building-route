@@ -1,3 +1,5 @@
+> **暂停开发（2026-11-13）**：当前进度已归档，详见 [ARCHIVE.md](ARCHIVE.md)。下文保留归档时的功能与运行记录。
+
 # AV Interactive · GitHub Pages 版
 
 这是独立的纯 Vite + React + Three.js 网页工程，只负责楼栋模型和轨迹的公开演示。
