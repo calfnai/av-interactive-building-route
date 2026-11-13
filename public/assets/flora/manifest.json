@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "sourceProject": "dailyflora",
+  "sourceRevision": "codex/hand-stairs-playground@5016812",
+  "reference": "docs/img2threejs/foxtail-lily-reference.jpg",
+  "licenseNote": "Local project study asset; retain DailyFlora source and reference attribution in distributions.",
+  "flowers": [
+    {
+      "id": "dailyflora-common-wild-stem",
+      "rarity": "common",
+      "palette": ["#eafa61", "#60d5c8", "#b48cff"],
+      "scale": 0.85,
+      "placement": "landing"
+    },
+    {
+      "id": "foxtail-lily-rare-spatial-event",
+      "rarity": "rare",
+      "palette": ["#838d2e", "#515c16", "#aeb382", "#f1e7b1"],
+      "scale": 1,
+      "placement": "blocked-event"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import InteractiveModel from "./InteractiveModel";
-import "./styles.css";
+import StairsPlayground from "./stairs/StairsPlayground";
+import "./stairs.css";
 
 const root = document.getElementById("root");
 
@@ -11,6 +11,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <InteractiveModel />
+    <StairsPlayground />
   </StrictMode>,
 );
