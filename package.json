@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:probe": "vite --host 127.0.0.1 --port 5175",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "node --experimental-strip-types --test \"tests/*.test.ts\""

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { bandsToWallReaction, floorAVReactionFor, useAudioBands } from "./audio-bands";
-import BuildingScene, { type CameraCommand } from "./BuildingScene";
+import BuildingScene, { type CameraCommand, type ResonanceInput } from "./BuildingScene";
 import HandControlPanel from "./HandControlPanel";
 import SoundControlPanel from "./SoundControlPanel";
 import { clamp01, gestureCommandFor } from "./hand-control";
@@ -33,6 +33,9 @@ export default function InteractiveModel() {
   const audio = useAudioBands();
   const pinchAnchorRef = useRef({ active: false, x: 0.5, progress: 0 });
   const gestureLatchRef = useRef({ gesture: "None", at: 0 });
+  const walkResonanceCellsRef = useRef(new Set<string>());
+  const walkResonanceEnergyRef = useRef(0);
+  const [walkResonance, setWalkResonance] = useState({ energy: 0, coverage: 0 });
 
   const eventIndex = Math.min(ROUTE_EVENTS.length - 1, Math.round(progress * (ROUTE_EVENTS.length - 1)));
   const currentEvent = ROUTE_EVENTS[eventIndex];
@@ -56,6 +59,20 @@ export default function InteractiveModel() {
     && primaryHand.gesture === "None";
   const handOrbit = cameraHandActive ? primaryHand.x : null;
   const handZoom = cameraHandActive ? primaryHand.depth : null;
+
+  const onWalkResonanceInput = (input: ResonanceInput) => {
+    if (cameraCommand !== "walk") return;
+    const cellX = Math.floor((input.position[0] + 12.75) / 1.25);
+    const cellZ = Math.floor((input.position[2] + 5.2) / 1.25);
+    if (input.moved) walkResonanceCellsRef.current.add(`${input.floor}:${cellX}:${cellZ}`);
+    const movementGain = input.moved ? 0.014 : -0.0018;
+    const audioGain = audio.bands.activity * (input.moved ? 0.005 : 0.001);
+    walkResonanceEnergyRef.current = clamp01(walkResonanceEnergyRef.current + movementGain + audioGain);
+    setWalkResonance({
+      energy: walkResonanceEnergyRef.current,
+      coverage: clamp01(walkResonanceCellsRef.current.size / 34),
+    });
+  };
 
   useEffect(() => {
     const anchor = pinchAnchorRef.current;
@@ -144,7 +161,12 @@ export default function InteractiveModel() {
   };
 
   const setCamera = (command: CameraCommand) => {
-    if (command === "walk" && progress >= 1) setProgress(0);
+    if (command === "walk") {
+      if (progress >= 1) setProgress(0);
+      walkResonanceCellsRef.current.clear();
+      walkResonanceEnergyRef.current = 0;
+      setWalkResonance({ energy: 0, coverage: 0 });
+    }
     setCameraCommand(command);
     setCommandVersion((value) => value + 1);
     if (command === "walk") {
@@ -155,7 +177,7 @@ export default function InteractiveModel() {
   };
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${cameraCommand === "walk" ? "fps-app-shell" : ""}`}>
       <header className="topbar">
         <div className="brand-block">
           <span className="eyebrow">RANGE ECHO / STAIRS SOUND WALL</span>
@@ -167,9 +189,11 @@ export default function InteractiveModel() {
           <span><b>{ROUTE_EVENTS.length}</b> 轨迹事件</span>
           <span><b>{BLOCKED_EVENTS.length}</b> 硬阻隔</span>
         </div>
-        <button className="panel-toggle" onClick={() => setPanelOpen((value) => !value)} aria-expanded={panelOpen}>
-          {panelOpen ? "收起路径" : "展开路径"}
-        </button>
+        {cameraCommand !== "walk" && (
+          <button className="panel-toggle" onClick={() => setPanelOpen((value) => !value)} aria-expanded={panelOpen}>
+            {panelOpen ? "收起路径" : "展开路径"}
+          </button>
+        )}
       </header>
 
       <section className={`viewport ${handPanelCollapsed ? "" : "hand-control-open"} ${cameraCommand === "walk" ? "fps-mode" : ""}`}>
@@ -188,41 +212,49 @@ export default function InteractiveModel() {
           wallReaction={wallReaction}
           walkFloor={walkFloor}
           onWalkFloorChange={setWalkFloor}
+          resonanceMode={cameraCommand === "walk"}
+          resonanceEnergy={walkResonance.energy}
+          resonanceCoverage={walkResonance.coverage}
+          onResonanceInput={onWalkResonanceInput}
         />
 
-        <HandControlPanel
-          frame={handController.frame}
-          videoRef={handController.videoRef}
-          overlayRef={handController.overlayRef}
-          startBrowser={handController.startBrowser}
-          connectDesktop={handController.connectDesktop}
-          stop={handController.stop}
-          collapsed={handPanelCollapsed}
-          lastCommand={lastHandCommand}
-          onToggle={() => setHandPanelCollapsed((value) => !value)}
-        />
+        {cameraCommand !== "walk" && (
+          <HandControlPanel
+            frame={handController.frame}
+            videoRef={handController.videoRef}
+            overlayRef={handController.overlayRef}
+            startBrowser={handController.startBrowser}
+            connectDesktop={handController.connectDesktop}
+            stop={handController.stop}
+            collapsed={handPanelCollapsed}
+            lastCommand={lastHandCommand}
+            onToggle={() => setHandPanelCollapsed((value) => !value)}
+          />
+        )}
 
-        <SoundControlPanel {...audio} floor={walkFloor} reaction={floorAVReactionFor(walkFloor)} />
+        {cameraCommand !== "walk" && <SoundControlPanel {...audio} floor={walkFloor} reaction={floorAVReactionFor(walkFloor)} />}
 
-        <div className="scene-tools" aria-label="三维视角控制">
-          <button className={cameraCommand === "overview" ? "active" : ""} onClick={() => setCamera("overview")}>全楼</button>
-          <button className={cameraCommand === "route" ? "active" : ""} onClick={() => setCamera("route")}>跟随</button>
-          <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
-          <button className={cameraCommand === "walk" ? "active" : ""} onClick={() => setCamera("walk")}>第一人称</button>
-          <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
-          <select
-            value={floorFocus ?? "all"}
-            onChange={(event) => setFloorFocus(event.target.value === "all" ? null : Number(event.target.value))}
-            aria-label="楼层切片"
-          >
-            <option value="all">全部楼层</option>
-            {Array.from({ length: 10 }, (_, index) => 10 - index).map((floor) => (
-              <option key={floor} value={floor}>{floor}F 切片</option>
-            ))}
-          </select>
-        </div>
+        {cameraCommand !== "walk" && (
+          <div className="scene-tools" aria-label="三维视角控制">
+            <button className={cameraCommand === "overview" ? "active" : ""} onClick={() => setCamera("overview")}>全楼</button>
+            <button className={cameraCommand === "route" ? "active" : ""} onClick={() => setCamera("route")}>跟随</button>
+            <button className={cameraCommand === "chase" ? "active" : ""} onClick={() => setCamera("chase")}>身后</button>
+            <button onClick={() => setCamera("walk")}>第一人称</button>
+            <button className={cameraCommand === "top" ? "active" : ""} onClick={() => setCamera("top")}>俯视</button>
+            <select
+              value={floorFocus ?? "all"}
+              onChange={(event) => setFloorFocus(event.target.value === "all" ? null : Number(event.target.value))}
+              aria-label="楼层切片"
+            >
+              <option value="all">全部楼层</option>
+              {Array.from({ length: 10 }, (_, index) => 10 - index).map((floor) => (
+                <option key={floor} value={floor}>{floor}F 切片</option>
+              ))}
+            </select>
+          </div>
+        )}
 
-        <div className={`route-panel ${panelOpen ? "open" : "closed"}`}>
+        {cameraCommand !== "walk" && <div className={`route-panel ${panelOpen ? "open" : "closed"}`}>
           <div className="panel-heading">
             <div>
               <span className="eyebrow">STRICT ROUTE SEQUENCE</span>
@@ -257,7 +289,7 @@ export default function InteractiveModel() {
               </button>
             ))}
           </div>
-        </div>
+        </div>}
 
         <article className={`event-card ${currentEvent.status}`}>
           <div className="event-meta">
@@ -278,11 +310,11 @@ export default function InteractiveModel() {
         </div>
       </section>
 
-      <footer className="transport">
-        <button className="play-button" disabled={cameraCommand === "walk"} onClick={() => {
+      {cameraCommand !== "walk" && <footer className="transport">
+        <button className="play-button" onClick={() => {
           if (progress >= 1) setProgress(0);
           setPlaying((value) => !value);
-        }} aria-label={cameraCommand === "walk" ? "WASD行走中" : (playing ? "暂停轨迹" : "播放轨迹")}>
+        }} aria-label={playing ? "暂停轨迹" : "播放轨迹"}>
           {playing ? "Ⅱ" : "▶"}
         </button>
         <span className="timecode">{String(eventIndex + 1).padStart(2, "0")}<i>/</i>{ROUTE_EVENTS.length}</span>
@@ -305,7 +337,7 @@ export default function InteractiveModel() {
           ))}
         </div>
         <div className="constraint-note"><span />锁闭条件已强制启用</div>
-      </footer>
+      </footer>}
     </main>
   );
 }

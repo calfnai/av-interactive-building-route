@@ -46,6 +46,15 @@ test("open interconnect and room blockers remain explicit", () => {
   assert.ok(openRoom.some((collider) => collider.id === "u1-f8-door-a-room-back"));
 });
 
+test("stair rails align with the authored stair mouth and leave a safe exit", () => {
+  const colliders = createCorridorColliders(1);
+  const rails = colliders.filter((collider) => collider.id.includes("stair-rail-1-unit-1"));
+  assert.equal(rails.length, 2);
+  assert.ok(rails.some((collider) => collider.minX < -10 && collider.maxX < -9.5));
+  assert.ok(rails.some((collider) => collider.minX > -9 && collider.maxX < -8.5));
+  assert.equal(collidesAt({ x: -9.6, z: -0.4 }, rails), false);
+});
+
 test("wall reaction separates low, mid and high frequency behavior", () => {
   const low = bandsToWallReaction({ subBass: 1, bass: 1, lowMid: 0, mid: 0, high: 0, activity: 0.5 });
   const high = bandsToWallReaction({ subBass: 0, bass: 0, lowMid: 0, mid: 0, high: 1, activity: 0.5 });

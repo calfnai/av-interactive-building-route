@@ -127,7 +127,7 @@ export function createCorridorColliders(
   // open. During a stair transition the player is additionally constrained to
   // the stair centerline by the transition state in BuildingScene.
   for (const unit of [1, 2] as const) {
-    const center = unitCenter(unit) + (unit === 1 ? 4.8 : -4.8);
+    const center = unitCenter(unit) + (unit === 1 ? -2.4 : 2.4);
     addCollider(colliders, `stair-rail-${floor}-unit-${unit}-left`, "shaft", center - 0.82, center - 0.62, -3.35, -1.05);
     addCollider(colliders, `stair-rail-${floor}-unit-${unit}-right`, "shaft", center + 0.62, center + 0.82, -3.35, -1.05);
   }

@@ -41,6 +41,17 @@ interface BuildingSceneProps {
   wallReaction: WallReactionState;
   walkFloor: number;
   onWalkFloorChange: (floor: number) => void;
+  resonanceMode?: boolean;
+  resonanceEnergy?: number;
+  resonanceCoverage?: number;
+  onResonanceInput?: (input: ResonanceInput) => void;
+  immersive?: boolean;
+}
+
+export interface ResonanceInput {
+  floor: number;
+  position: Vec3;
+  moved: boolean;
 }
 
 const palette = {
@@ -56,6 +67,10 @@ const palette = {
   locked: 0xff715b,
   open: 0x63e6be,
 };
+
+// Temporary exploration mode: preserve the authored route data, but let the
+// player open every physical door while we evaluate the building itself.
+const ALL_DOORS_UNLOCKED = true;
 
 const toVector = ([x, y, z]: Vec3) => new THREE.Vector3(x, y, z);
 
@@ -144,7 +159,9 @@ interface PlayerState {
 
 type NavigationMode =
   | "walking"
-  | "stairs"
+  | "entering-stair"
+  | "stair-transition"
+  | "landing"
   | "elevator-opening"
   | "elevator-open"
   | "elevator-inside"
@@ -164,12 +181,16 @@ interface NavigationState {
   transitionFromX: number;
   transitionStairX: number;
   transitionDuration: number;
+  stairExitZ: number;
   elevatorUnit: 1 | 2;
   elevatorTargetFloor: number;
 }
 
 function applyFirstPersonCamera(camera: THREE.PerspectiveCamera, player: PlayerState, cameraBob = 0) {
-  const eye = player.position.clone().add(new THREE.Vector3(0, 1.5 + cameraBob, 0));
+  // player.position.y is the authored feet/base height (floor + 0.38).
+  // Keep the eye just below the apartment-door header instead of floating
+  // above every doorway.
+  const eye = player.position.clone().add(new THREE.Vector3(0, 1.04 + cameraBob, 0));
   const direction = new THREE.Vector3(
     Math.sin(player.yaw) * Math.cos(player.pitch),
     Math.sin(player.pitch),
@@ -215,7 +236,8 @@ function nearestSpatialNode(
       nearestDistance = distance;
     }
   }
-  return nearestDistance < 1.85 ? nearest : null;
+  const activationDistance = kind === "stair" ? 1.18 : 1.85;
+  return nearestDistance < activationDistance ? nearest : null;
 }
 
 function faceMarker(marker: THREE.Group, heading: THREE.Vector3) {
@@ -270,12 +292,93 @@ function addBox(
 }
 
 function addDoor(group: THREE.Group, position: Vec3, locked: boolean, label: string) {
-  const door = addBox(group, [0.16, 1.45, 1.15], position, locked ? palette.locked : palette.open, 0.88);
+  const available = locked && !ALL_DOORS_UNLOCKED;
+  const door = addBox(group, [0.16, 1.45, 1.15], position, available ? palette.locked : palette.open, 1);
   door.userData.isDoor = true;
-  const sprite = createTextSprite(locked ? `LOCKED · ${label}` : `OPEN · ${label}`, locked ? "#ff8b78" : "#75f0c7", 0.7);
+  const sprite = createTextSprite(available ? `LOCKED · ${label}` : `OPEN · ${label}`, available ? "#ff8b78" : "#75f0c7", 0.7);
   sprite.position.set(position[0], position[1] + 1.05, position[2]);
   group.add(sprite);
   return door;
+}
+
+function createFlowerPatch(group: THREE.Group, x: number, y: number, hue: number) {
+  const patch = new THREE.Group();
+  patch.position.set(x, y + 0.08, 0.58);
+  patch.scale.setScalar(0.01);
+  const flowerColor = new THREE.Color().setHSL(hue, 0.78, 0.62);
+  const leafColor = new THREE.Color().setHSL((hue + 0.22) % 1, 0.62, 0.38);
+  const stemMaterial = new THREE.MeshStandardMaterial({ color: leafColor, roughness: 0.72 });
+  const flowerMaterial = new THREE.MeshStandardMaterial({
+    color: flowerColor,
+    emissive: flowerColor,
+    emissiveIntensity: 0.34,
+    roughness: 0.48,
+  });
+
+  for (let index = 0; index < 5; index += 1) {
+    const angle = (index / 5) * Math.PI * 2;
+    const height = 0.38 + (index % 3) * 0.16;
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.028, height, 7), stemMaterial);
+    stem.position.set(Math.cos(angle) * 0.22, height * 0.5, Math.sin(angle) * 0.16);
+    patch.add(stem);
+
+    const head = new THREE.Group();
+    head.position.set(Math.cos(angle) * 0.22, height + 0.06, Math.sin(angle) * 0.16);
+    for (let petal = 0; petal < 5; petal += 1) {
+      const petalMesh = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), flowerMaterial);
+      const petalAngle = (petal / 5) * Math.PI * 2;
+      petalMesh.position.set(Math.cos(petalAngle) * 0.09, 0, Math.sin(petalAngle) * 0.09);
+      petalMesh.scale.set(1, 0.52, 0.72);
+      head.add(petalMesh);
+    }
+    const center = new THREE.Mesh(
+      new THREE.SphereGeometry(0.065, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0xfff4af, emissive: 0xffc857, emissiveIntensity: 0.5 }),
+    );
+    head.add(center);
+    patch.add(head);
+  }
+
+  group.add(patch);
+  return patch;
+}
+
+function createFloorOneLandmarks(group: THREE.Group, x: number, y: number) {
+  const landmarks: Array<{ mesh: THREE.Mesh; material: THREE.MeshStandardMaterial; phase: number }> = [];
+  const addLandmarkBox = (size: Vec3, position: Vec3, color: number, phase: number) => {
+    const mesh = addBox(group, size, position, color, 0.72);
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    material.emissive.set(color);
+    material.emissiveIntensity = 0.18;
+    landmarks.push({ mesh, material, phase });
+  };
+
+  // The side-door threshold becomes a readable cyan beacon instead of an
+  // anonymous wall segment.
+  addLandmarkBox([0.08, 1.68, 0.08], [x - 3.58, y + 0.84, 0.42], 0x6de0d0, 0.2);
+  addLandmarkBox([0.08, 1.68, 0.08], [x - 2.86, y + 0.84, 0.42], 0x6de0d0, 1.1);
+
+  // A floor-scale listening ring gives the player a visible place to walk
+  // through; it brightens only after movement has started the resonance.
+  const ringMaterial = new THREE.MeshStandardMaterial({
+    color: 0x253e41,
+    emissive: 0xeafa61,
+    emissiveIntensity: 0.16,
+    transparent: true,
+    opacity: 0.76,
+    roughness: 0.56,
+    metalness: 0.16,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.46, 0.53, 48), ringMaterial);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(x, y + 0.09, -0.42);
+  group.add(ring);
+  landmarks.push({ mesh: ring, material: ringMaterial, phase: 2.2 });
+
+  // The flower patch has a physical base, so it reads as a destination before
+  // it blooms rather than as a random effect appearing in empty space.
+  addLandmarkBox([0.95, 0.16, 0.62], [x, y + 0.08, 0.58], 0x31484b, 3.2);
+  return landmarks;
 }
 
 function addFlatDoor(
@@ -286,12 +389,13 @@ function addFlatDoor(
   color: number,
   label?: string,
 ) {
-  const door = addBox(group, [width, 1.08, 0.12], position, locked ? palette.locked : color, 0.82);
+  const available = locked && !ALL_DOORS_UNLOCKED;
+  const door = addBox(group, [width, 1.45, 0.12], position, available ? palette.locked : color, 1);
   door.userData.isDoor = true;
   addBox(group, [0.08, 0.12, 0.1], [position[0] + width * 0.32, position[1] + 0.05, position[2] - 0.08], 0xf4f1d0, 0.95);
   if (label) {
-    const sprite = createTextSprite(label, locked ? "#ff8b78" : "#dce7e8", 0.55);
-    sprite.position.set(position[0], position[1] + 0.82, position[2] + 0.06);
+    const sprite = createTextSprite(label, available ? "#ff8b78" : "#dce7e8", 0.55);
+    sprite.position.set(position[0], position[1] + 1.02, position[2] + 0.06);
     group.add(sprite);
   }
   return door;
@@ -506,6 +610,11 @@ export default function BuildingScene({
   wallReaction,
   walkFloor,
   onWalkFloorChange,
+  resonanceMode = false,
+  resonanceEnergy = 0,
+  resonanceCoverage = 0,
+  onResonanceInput,
+  immersive = false,
 }: BuildingSceneProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [rendererError, setRendererError] = useState(false);
@@ -518,6 +627,15 @@ export default function BuildingScene({
   const resonanceSurfacesRef = useRef<ResonanceSurface[]>([]);
   const collidersRef = useRef<Collider[]>([]);
   const wallReactionRef = useRef(wallReaction);
+  const resonanceModeRef = useRef(resonanceMode);
+  const resonanceEnergyRef = useRef(resonanceEnergy);
+  const resonanceCoverageRef = useRef(resonanceCoverage);
+  const onResonanceInputRef = useRef(onResonanceInput);
+  const lastResonanceInputAtRef = useRef(0);
+  const lastResonancePositionRef = useRef(new THREE.Vector3());
+  const resonancePositionInitializedRef = useRef(false);
+  const floorFieldRef = useRef<Map<number, Array<{ mesh: THREE.Mesh; material: THREE.MeshBasicMaterial }>>>(new Map());
+  const flowerPatchRef = useRef<Map<number, THREE.Group[]>>(new Map());
   const locomotionPhaseRef = useRef(0);
   const elevatorDoorsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const interactiveDoorsRef = useRef<Map<string, InteractiveDoor>>(new Map());
@@ -539,6 +657,8 @@ export default function BuildingScene({
   });
   const movementKeysRef = useRef(new Set<string>());
   const fpsPointerLockedRef = useRef(false);
+  const fpsPointerDraggingRef = useRef(false);
+  const fallbackPointerPositionRef = useRef({ x: 0, y: 0 });
   const navigationRef = useRef<NavigationState>({
     mode: "walking",
     floor: walkFloor,
@@ -554,11 +674,17 @@ export default function BuildingScene({
     transitionFromX: unitX(1) - 2.4,
     transitionStairX: unitX(1) - 2.4,
     transitionDuration: 1250,
+    stairExitZ: -0.4,
   });
   const elevatorTimeoutRef = useRef<number | null>(null);
   const [fpsPointerLocked, setFpsPointerLocked] = useState(false);
-  const [navigationMessage, setNavigationMessageState] = useState("点击画面锁定鼠标 · WASD 行走");
-  const navigationMessageRef = useRef("点击画面锁定鼠标 · WASD 行走");
+  const walkInputEnabledRef = useRef(false);
+  const firstPersonRigRef = useRef<THREE.Group | null>(null);
+  const playerShadowRef = useRef<THREE.Mesh | null>(null);
+  const debugGroupsRef = useRef<THREE.Object3D[]>([]);
+  const resonanceLandmarksRef = useRef<Array<{ mesh: THREE.Mesh; material: THREE.MeshStandardMaterial; phase: number }>>([]);
+  const [navigationMessage, setNavigationMessageState] = useState("点击画面开始 · WASD 行走 · 拖动转向 · R 重置本层");
+  const navigationMessageRef = useRef("点击画面开始 · WASD 行走 · 拖动转向 · R 重置本层");
 
   const setNavigationMessage = (message: string) => {
     if (navigationMessageRef.current === message) return;
@@ -569,6 +695,10 @@ export default function BuildingScene({
   cameraCommandRef.current = cameraCommand;
   onWalkFloorChangeRef.current = onWalkFloorChange;
   wallReactionRef.current = wallReaction;
+  resonanceModeRef.current = resonanceMode;
+  resonanceEnergyRef.current = resonanceEnergy;
+  resonanceCoverageRef.current = resonanceCoverage;
+  onResonanceInputRef.current = onResonanceInput;
   const characterHeadingRef = useRef(new THREE.Vector3(0, 0, -1));
   const focusGroupsRef = useRef<Map<number, THREE.Group>>(new Map());
 
@@ -633,7 +763,7 @@ export default function BuildingScene({
       setNavigationMessage("请走到门前，再按 E 互动");
       return;
     }
-    if (door.access === "locked" || door.access === "card") {
+    if (!ALL_DOORS_UNLOCKED && (door.access === "locked" || door.access === "card")) {
       setNavigationMessage(`${door.label} 已锁定，不能打开`);
       return;
     }
@@ -644,22 +774,19 @@ export default function BuildingScene({
   const startStairTransition = (direction: 1 | -1) => {
     const navigation = navigationRef.current;
     const player = playerRef.current;
-    if (navigation.mode !== "walking") return;
+    if (navigation.mode !== "walking") return false;
     const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
-    if (!stair) {
-      setNavigationMessage("请先走到楼梯口，再按 W / S 上下楼");
-      return;
-    }
+    if (!stair) return false;
     const targetFloor = navigation.floor + direction;
     const targetStair = SPATIAL_NODES.find(
       (node) => node.kind === "stair" && node.unit === stair.unit && node.floor === targetFloor,
     );
-    if (!targetStair || stair.access === "locked" || targetStair.access === "locked") {
+    if (!targetStair || (!ALL_DOORS_UNLOCKED && (stair.access === "locked" || targetStair.access === "locked"))) {
       setNavigationMessage("这段楼梯被锁住了，不能穿过楼层");
-      return;
+      return false;
     }
     movementKeysRef.current.clear();
-    navigation.mode = "stairs";
+    navigation.mode = "entering-stair";
     navigation.transitionStarted = performance.now();
     navigation.transitionFromY = player.position.y;
     navigation.transitionToY = yForFloor(targetFloor) + 0.38;
@@ -669,8 +796,11 @@ export default function BuildingScene({
     navigation.transitionToZ = targetStair.position[2];
     navigation.transitionFromX = player.position.x;
     navigation.transitionStairX = stair.position[0];
-    navigation.transitionDuration = 1250;
+    // Clear the rail colliders plus PLAYER_RADIUS before returning control.
+    navigation.stairExitZ = targetStair.position[2] + 1.85;
+    navigation.transitionDuration = 180;
     setNavigationMessage(direction > 0 ? `楼梯上行至 ${targetFloor}F…` : `楼梯下行至 ${targetFloor}F…`);
+    return true;
   };
 
   const beginElevatorCall = () => {
@@ -698,6 +828,21 @@ export default function BuildingScene({
     }, 650);
   };
 
+  const leaveElevator = () => {
+    const navigation = navigationRef.current;
+    const player = playerRef.current;
+    const hall = SPATIAL_NODES.find(
+      (node) => node.kind === "elevatorHall" && node.unit === navigation.elevatorUnit && node.floor === navigation.floor,
+    );
+    if (!hall) return false;
+    player.position.set(...hall.position);
+    navigation.mode = "walking";
+    movementKeysRef.current.clear();
+    refreshCorridorColliders();
+    setNavigationMessage("已离开电梯 · WASD 行走");
+    return true;
+  };
+
   useEffect(() => {
     const editableTarget = (target: EventTarget | null) => {
       const element = target as HTMLElement | null;
@@ -707,16 +852,48 @@ export default function BuildingScene({
       if (editableTarget(event.target)) return;
       const key = event.key.toLowerCase();
       if (cameraCommandRef.current !== "walk") return;
-      if (!fpsPointerLockedRef.current) return;
+      if (!walkInputEnabledRef.current) return;
       const navigation = navigationRef.current;
       const player = playerRef.current;
       const isMovementKey = ["w", "a", "s", "d", "shift"].includes(key);
       const isDirectionalKey = ["w", "a", "s", "d"].includes(key);
       const numericFloor = event.key === "0" ? 10 : Number(event.key);
 
+      if (key === "r") {
+        const unit = player.position.x < 0 ? 1 : 2;
+        const resetPoint = SPATIAL_NODES.find(
+          (node) => node.kind === "public" && node.unit === unit && node.floor === navigation.floor,
+        );
+        if (resetPoint) {
+          player.position.set(...resetPoint.position);
+          player.floor = navigation.floor;
+          navigation.mode = "walking";
+          movementKeysRef.current.clear();
+          collidersRef.current = createCorridorColliders(navigation.floor, {
+            openInterconnect: navigation.floor === 8 || navigation.floor === 10,
+            openDoors: openDoorIdsRef.current,
+          });
+          onWalkFloorChangeRef.current(navigation.floor);
+          setNavigationMessage(`${navigation.floor}F 已重置到公共区 · WASD 行走`);
+        }
+        event.preventDefault();
+        return;
+      }
+
       if (navigation.mode === "elevator-inside" && numericFloor >= 1 && numericFloor <= 10) {
+        if (!elevatorDoorsRef.current.has(`${navigation.elevatorUnit}-${numericFloor}`)) {
+          setNavigationMessage(`${navigation.elevatorUnit} 单元电梯不停 ${numericFloor}F · S 离开电梯`);
+          event.preventDefault();
+          return;
+        }
         navigation.elevatorTargetFloor = numericFloor;
         setNavigationMessage(`目的楼层 ${numericFloor}F · 按 E 关门并运行`);
+        event.preventDefault();
+        return;
+      }
+
+      if (navigation.mode === "elevator-inside" && ["a", "s", "d"].includes(key)) {
+        leaveElevator();
         event.preventDefault();
         return;
       }
@@ -764,13 +941,7 @@ export default function BuildingScene({
       }
 
       if (navigation.mode === "elevator-arrived" && isDirectionalKey) {
-        const hall = SPATIAL_NODES.find(
-          (node) => node.kind === "elevatorHall" && node.unit === navigation.elevatorUnit && node.floor === navigation.floor,
-        );
-        if (hall) player.position.set(...hall.position);
-        navigation.mode = "walking";
-        setNavigationMessage("电梯门已打开 · WASD 出电梯");
-        movementKeysRef.current.add(key);
+        if (leaveElevator()) movementKeysRef.current.add(key);
         event.preventDefault();
         return;
       }
@@ -780,7 +951,13 @@ export default function BuildingScene({
         return;
       }
 
-      if (["stairs", "elevator-opening", "elevator-riding"].includes(navigation.mode)) {
+      if (["entering-stair", "stair-transition", "landing"].includes(navigation.mode)) {
+        if (["a", "d"].includes(key)) movementKeysRef.current.add(key);
+        if (isMovementKey || key === "e") event.preventDefault();
+        return;
+      }
+
+      if (["elevator-opening", "elevator-riding"].includes(navigation.mode)) {
         if (isMovementKey || key === "e") event.preventDefault();
         return;
       }
@@ -795,9 +972,17 @@ export default function BuildingScene({
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    const releaseInput = () => {
+      walkInputEnabledRef.current = false;
+      movementKeysRef.current.clear();
+    };
+    window.addEventListener("blur", releaseInput);
+    document.addEventListener("visibilitychange", releaseInput);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", releaseInput);
+      document.removeEventListener("visibilitychange", releaseInput);
       if (elevatorTimeoutRef.current !== null) window.clearTimeout(elevatorTimeoutRef.current);
     };
   }, []);
@@ -814,6 +999,44 @@ export default function BuildingScene({
     const camera = new THREE.PerspectiveCamera(42, host.clientWidth / host.clientHeight, 0.1, 140);
     camera.position.set(32, 27, 36);
     cameraRef.current = camera;
+
+    const firstPersonRig = new THREE.Group();
+    firstPersonRig.visible = cameraCommandRef.current === "walk";
+    const sleeveMaterial = new THREE.MeshStandardMaterial({
+      color: 0x31434a,
+      emissive: 0x102328,
+      emissiveIntensity: 0.42,
+      roughness: 0.78,
+    });
+    const handMaterial = new THREE.MeshStandardMaterial({
+      color: 0xd6aa8f,
+      emissive: 0x3b211a,
+      emissiveIntensity: 0.12,
+      roughness: 0.72,
+    });
+    for (const side of [-1, 1]) {
+      // Keep the body cue at the bottom edge. Large near-camera geometry reads
+      // as a detached NPC instead of a first-person silhouette.
+      const sleeve = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.18, 4, 8), sleeveMaterial);
+      sleeve.position.set(side * 0.24, -0.66, -1.12);
+      sleeve.rotation.z = side * -0.18;
+      firstPersonRig.add(sleeve);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), handMaterial);
+      hand.position.set(side * 0.26, -0.77, -1.25);
+      firstPersonRig.add(hand);
+    }
+    scene.add(firstPersonRig);
+    firstPersonRigRef.current = firstPersonRig;
+
+    const playerShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.38, 24),
+      new THREE.MeshBasicMaterial({ color: 0x020607, transparent: true, opacity: 0.42, depthWrite: false }),
+    );
+    playerShadow.rotation.x = -Math.PI / 2;
+    playerShadow.position.set(initialPlayerPosition[0], initialPlayerPosition[1] - 0.34, initialPlayerPosition[2]);
+    playerShadow.visible = cameraCommandRef.current === "walk";
+    sceneRef.current?.add(playerShadow);
+    playerShadowRef.current = playerShadow;
 
     let renderer: THREE.WebGLRenderer;
     try {
@@ -837,13 +1060,19 @@ export default function BuildingScene({
 
     const onCanvasClick = () => {
       if (cameraCommandRef.current !== "walk") return;
+      walkInputEnabledRef.current = true;
+      renderer.domElement.focus();
       try {
         const lockRequest = renderer.domElement.requestPointerLock?.();
         void Promise.resolve(lockRequest).catch(() => {
-          setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
+          setNavigationMessage(resonanceModeRef.current
+            ? "拖动鼠标转向 · WASD 行走 · E 互动"
+            : "当前预览容器不允许锁定鼠标，请拖动鼠标转向");
         });
       } catch {
-        setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
+        setNavigationMessage(resonanceModeRef.current
+          ? "拖动鼠标转向 · WASD 行走 · E 互动"
+          : "当前预览容器不允许锁定鼠标，请拖动鼠标转向");
       }
     };
     const onPointerLockChange = () => {
@@ -852,8 +1081,11 @@ export default function BuildingScene({
       setFpsPointerLocked(locked);
       renderer.domElement.classList.toggle("fps-canvas-locked", locked);
       if (!locked) {
+        fpsPointerDraggingRef.current = false;
         movementKeysRef.current.clear();
-        setNavigationMessage("点击画面锁定鼠标 · WASD 行走");
+        setNavigationMessage(walkInputEnabledRef.current || resonanceModeRef.current
+          ? "WASD 行走 · 拖动鼠标转向 · E 互动"
+          : "点击画面开始 · WASD 行走 · 拖动转向 · R 重置本层");
       } else {
         setNavigationMessage("WASD 行走 · 鼠标转向 · E 互动");
       }
@@ -862,17 +1094,48 @@ export default function BuildingScene({
       fpsPointerLockedRef.current = false;
       setFpsPointerLocked(false);
       movementKeysRef.current.clear();
-      setNavigationMessage("当前预览容器不允许锁定鼠标，请复制地址到 Safari / Chrome 打开");
+      setNavigationMessage("WASD 行走 · 拖动鼠标转向 · E 互动");
     };
     const onPointerMove = (event: MouseEvent) => {
-      if (!fpsPointerLockedRef.current || cameraCommandRef.current !== "walk") return;
-      playerRef.current.yaw -= event.movementX * 0.0024;
-      playerRef.current.pitch = THREE.MathUtils.clamp(playerRef.current.pitch - event.movementY * 0.0024, -0.9, 0.75);
+      if (cameraCommandRef.current !== "walk") return;
+      let deltaX = 0;
+      let deltaY = 0;
+      if (fpsPointerLockedRef.current) {
+        deltaX = event.movementX;
+        deltaY = event.movementY;
+      } else if (walkInputEnabledRef.current && fpsPointerDraggingRef.current) {
+        deltaX = event.clientX - fallbackPointerPositionRef.current.x;
+        deltaY = event.clientY - fallbackPointerPositionRef.current.y;
+        fallbackPointerPositionRef.current.x = event.clientX;
+        fallbackPointerPositionRef.current.y = event.clientY;
+      } else {
+        return;
+      }
+      playerRef.current.yaw -= deltaX * 0.004;
+      playerRef.current.pitch = THREE.MathUtils.clamp(playerRef.current.pitch - deltaY * 0.004, -0.9, 0.75);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (cameraCommandRef.current !== "walk" || fpsPointerLockedRef.current) return;
+      walkInputEnabledRef.current = true;
+      fpsPointerDraggingRef.current = true;
+      fallbackPointerPositionRef.current.x = event.clientX;
+      fallbackPointerPositionRef.current.y = event.clientY;
+      renderer.domElement.setPointerCapture?.(event.pointerId);
+      setNavigationMessage("WASD 行走 · 拖动鼠标转向 · E 互动");
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      fpsPointerDraggingRef.current = false;
+      if (renderer.domElement.hasPointerCapture?.(event.pointerId)) {
+        renderer.domElement.releasePointerCapture?.(event.pointerId);
+      }
     };
     renderer.domElement.addEventListener("click", onCanvasClick);
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointerup", onPointerUp);
     document.addEventListener("pointerlockchange", onPointerLockChange);
     document.addEventListener("pointerlockerror", onPointerLockError);
     window.addEventListener("mousemove", onPointerMove);
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -911,7 +1174,16 @@ export default function BuildingScene({
       kind: InteractiveDoor["kind"],
     ) => {
       mesh.userData.openTarget = 1;
-      interactiveDoorsRef.current.set(id, { id, mesh, floor, position, access, label, kind, open: false });
+      interactiveDoorsRef.current.set(id, {
+        id,
+        mesh,
+        floor,
+        position,
+        access: ALL_DOORS_UNLOCKED ? "open" : access,
+        label,
+        kind,
+        open: false,
+      });
     };
 
     for (const floor of FLOORS) {
@@ -925,6 +1197,32 @@ export default function BuildingScene({
       for (const unit of [1, 2] as const) {
         const x = unitX(unit);
         addBox(floorGroup, [11.1, 0.12, 7.7], [x, y, 0.7], palette.floor, 0.78);
+
+        const floorFieldMaterial = new THREE.MeshBasicMaterial({
+          color: new THREE.Color().setHSL(floorAVReactionFor(floor).hue, 0.78, 0.58),
+          transparent: true,
+          opacity: 0,
+          wireframe: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        });
+        const floorField = new THREE.Mesh(new THREE.PlaneGeometry(10.3, 6.7, 22, 14), floorFieldMaterial);
+        floorField.rotation.x = -Math.PI / 2;
+        floorField.position.set(x, y + 0.075, 0.7);
+        floorGroup.add(floorField);
+        const floorFields = floorFieldRef.current.get(floor) ?? [];
+        floorFields.push({ mesh: floorField, material: floorFieldMaterial });
+        floorFieldRef.current.set(floor, floorFields);
+
+        const flowerPatch = createFlowerPatch(floorGroup, x, y, floorAVReactionFor(floor).hue);
+        const flowerPatches = flowerPatchRef.current.get(floor) ?? [];
+        flowerPatches.push(flowerPatch);
+        flowerPatchRef.current.set(floor, flowerPatches);
+
+        if (floor === 1 && unit === 1) {
+          resonanceLandmarksRef.current.push(...createFloorOneLandmarks(floorGroup, x, y));
+        }
 
         const outline = new THREE.LineSegments(
           new THREE.EdgesGeometry(new THREE.BoxGeometry(11.1, 0.12, 7.7)),
@@ -964,7 +1262,7 @@ export default function BuildingScene({
           const doorId = `u${unit}-f${floor}-door-${["a", "b", "c"][room]}`;
           const doorNode = SPATIAL_NODES.find((node) => node.id === doorId);
           const locked = doorNode?.access === "locked";
-          const keyed = doorNode?.access === "key";
+          const keyed = !ALL_DOORS_UNLOCKED && doorNode?.access === "key";
           const apartmentDoor = addFlatDoor(
             floorGroup,
             [x + (room - 1) * 1.65, y + 0.68, 2.02],
@@ -1162,6 +1460,8 @@ export default function BuildingScene({
       checkpoints.add(point);
     });
 
+    const blockedGroup = new THREE.Group();
+    scene.add(blockedGroup);
     for (const item of BLOCKED_EVENTS) {
       const ring = new THREE.Mesh(
         new THREE.TorusGeometry(0.34, 0.055, 8, 28),
@@ -1169,7 +1469,7 @@ export default function BuildingScene({
       );
       ring.rotation.x = Math.PI / 2;
       ring.position.copy(toVector(item.position));
-      scene.add(ring);
+      blockedGroup.add(ring);
     }
 
     const marker = new THREE.Group();
@@ -1198,6 +1498,7 @@ export default function BuildingScene({
     marker.position.copy(routePoints[0]);
     markerRef.current = marker;
     scene.add(marker);
+    debugGroupsRef.current = [graphGroup, route, ghostRouteLine, checkpoints, blockedGroup, marker];
 
     const resize = () => {
       if (!host.clientWidth || !host.clientHeight) return;
@@ -1222,11 +1523,37 @@ export default function BuildingScene({
       const navigation = navigationRef.current;
       const reaction = wallReactionRef.current;
       const activeFloor = navigation.floor;
+      host.dataset.navigationMode = navigation.mode;
+      host.dataset.playerFloor = String(playerRef.current.floor);
+      host.dataset.playerX = playerRef.current.position.x.toFixed(2);
+      host.dataset.playerZ = playerRef.current.position.z.toFixed(2);
+      host.dataset.playerYaw = playerRef.current.yaw.toFixed(2);
+      host.dataset.walkInput = String(walkInputEnabledRef.current);
+      const resonanceActive = resonanceModeRef.current;
+      const resonanceEnergy = resonanceActive ? resonanceEnergyRef.current : 0;
+      const resonanceCoverage = resonanceActive ? resonanceCoverageRef.current : 0;
+      host.dataset.walkEnergy = resonanceEnergy.toFixed(2);
+      host.dataset.walkCoverage = resonanceCoverage.toFixed(2);
+      const debugVisible = cameraCommandRef.current !== "walk";
+      debugGroupsRef.current.forEach((group) => { group.visible = debugVisible; });
+      scene.traverse((object) => {
+        if (object instanceof THREE.Sprite) object.visible = debugVisible;
+      });
+      const landmarkStrength = resonanceActive && activeFloor === 1
+        ? THREE.MathUtils.clamp(resonanceEnergy * 0.78 + resonanceCoverage * 0.62, 0, 1)
+        : 0;
+      resonanceLandmarksRef.current.forEach(({ mesh, material, phase }) => {
+        const wave = Math.sin(t * 1.8 + phase) * 0.5 + 0.5;
+        material.emissiveIntensity = 0.14 + landmarkStrength * (0.9 + wave * 1.8);
+        mesh.scale.setScalar(1 + landmarkStrength * (0.03 + wave * 0.08));
+      });
       resonanceSurfacesRef.current.forEach((surface) => {
+        surface.group.visible = cameraCommandRef.current !== "walk" || surface.floor === activeFloor;
         const floorDistance = Math.abs(surface.floor - activeFloor);
         // The audio field is global: the current floor is strongest, but every
         // floor keeps a visible response so the building reads as one instrument.
-        const floorStrength = Math.max(0.46, 1 - floorDistance * 0.055);
+        const floorStrength = Math.max(0.46, 1 - floorDistance * 0.055)
+          + (resonanceActive && surface.floor === activeFloor ? resonanceEnergy * 0.9 + resonanceCoverage * 0.28 : 0);
         const phase = surface.floor * 0.57 + t * (0.7 + reaction.propagation * 1.9);
         const pulse = Math.max(0, Math.sin(phase * 1.8)) * 0.5 + 0.5;
         const displacement = reaction.displacement * floorStrength * (0.72 + pulse * 0.62);
@@ -1274,42 +1601,91 @@ export default function BuildingScene({
         surface.particleMaterial.opacity = 0.08 + reaction.particleEmission * floorStrength * 1.12;
         surface.particleMaterial.size = 0.024 + reaction.particleEmission * floorStrength * 0.07;
       });
+      floorFieldRef.current.forEach((fields, floor) => {
+        const floorDistance = Math.abs(floor - activeFloor);
+        const activeStrength = resonanceActive && floorDistance === 0
+          ? resonanceEnergy * 0.68 + resonanceCoverage * 0.42
+          : 0;
+        fields.forEach(({ mesh, material }, index) => {
+          material.opacity = activeStrength > 0.01 ? 0.025 + activeStrength * 0.17 : 0;
+          mesh.rotation.z = t * (0.08 + activeStrength * 0.24) + index * 0.7;
+          const scale = 1 + Math.sin(t * 1.4 + index) * activeStrength * 0.035;
+          mesh.scale.set(scale, scale, scale);
+        });
+      });
+      flowerPatchRef.current.forEach((patches, floor) => {
+        const growth = resonanceActive && floor === activeFloor
+          ? THREE.MathUtils.clamp(resonanceEnergy * 0.72 + resonanceCoverage * 0.68, 0, 1)
+          : 0;
+        patches.forEach((patch, index) => {
+          const targetScale = 0.01 + growth * (0.65 + index * 0.08);
+          patch.scale.setScalar(THREE.MathUtils.lerp(patch.scale.x, targetScale, Math.min(1, delta * 4.5)));
+          patch.rotation.y = t * 0.12 + index * 0.45;
+        });
+      });
       interactiveDoorsRef.current.forEach((door) => {
         const targetScale = typeof door.mesh.userData.openTarget === "number" ? door.mesh.userData.openTarget : 1;
         door.mesh.scale.x = THREE.MathUtils.lerp(door.mesh.scale.x, targetScale, Math.min(1, delta * 10));
       });
 
       let cameraBob = 0;
+      const player = playerRef.current;
       if (cameraCommandRef.current === "walk") {
         controls.enabled = false;
-        const player = playerRef.current;
-        if (navigation.mode === "stairs") {
+        if (["entering-stair", "stair-transition", "landing"].includes(navigation.mode)) {
           const transitionProgress = THREE.MathUtils.clamp(
             (performance.now() - navigation.transitionStarted) / navigation.transitionDuration,
             0,
             1,
           );
           const eased = transitionProgress * transitionProgress * (3 - 2 * transitionProgress);
-          player.position.y = THREE.MathUtils.lerp(
-            navigation.transitionFromY,
-            navigation.transitionToY,
-            eased,
-          );
-          player.position.x = THREE.MathUtils.lerp(navigation.transitionFromX, navigation.transitionStairX, eased);
-          player.position.z = THREE.MathUtils.lerp(navigation.transitionFromZ, navigation.transitionToZ, eased)
-            + navigation.transitionArcDirection * Math.sin(transitionProgress * Math.PI) * 0.88;
-          cameraBob = Math.sin(transitionProgress * Math.PI * 8) * 0.055 + Math.sin(transitionProgress * Math.PI) * 0.025;
-          if (transitionProgress >= 1) {
-            player.floor = navigation.transitionTargetFloor;
-            navigation.floor = player.floor;
-            navigation.mode = "walking";
+
+          if (navigation.mode === "entering-stair") {
+            player.position.x = THREE.MathUtils.lerp(navigation.transitionFromX, navigation.transitionStairX, eased);
+            player.position.z = THREE.MathUtils.lerp(navigation.transitionFromZ, navigation.transitionToZ, eased);
+            if (transitionProgress >= 1) {
+              navigation.mode = "stair-transition";
+              navigation.transitionStarted = performance.now();
+              navigation.transitionDuration = 1250;
+              navigation.transitionFromY = player.position.y;
+            }
+          } else if (navigation.mode === "stair-transition") {
+            player.position.y = THREE.MathUtils.lerp(navigation.transitionFromY, navigation.transitionToY, eased);
             player.position.x = navigation.transitionStairX;
-            player.position.z = navigation.transitionToZ;
-            collidersRef.current = createCorridorColliders(player.floor, {
-              openInterconnect: player.floor === 8 || player.floor === 10,
-            });
-            onWalkFloorChangeRef.current(player.floor);
-            setNavigationMessage(`已到达 ${player.floor}F · WASD 行走`);
+            player.position.z = THREE.MathUtils.lerp(navigation.transitionFromZ, navigation.transitionToZ, eased)
+              + navigation.transitionArcDirection * Math.sin(transitionProgress * Math.PI) * 0.72;
+            const lateral = movementKeysRef.current.has("d") ? 1 : movementKeysRef.current.has("a") ? -1 : 0;
+            player.position.x = THREE.MathUtils.clamp(
+              player.position.x + lateral * delta * 1.2,
+              navigation.transitionStairX - 0.42,
+              navigation.transitionStairX + 0.42,
+            );
+            cameraBob = Math.sin(transitionProgress * Math.PI * 8) * 0.055 + Math.sin(transitionProgress * Math.PI) * 0.025;
+            if (transitionProgress >= 1) {
+              navigation.mode = "landing";
+              navigation.transitionStarted = performance.now();
+              navigation.transitionDuration = 220;
+              navigation.transitionFromX = player.position.x;
+              navigation.transitionFromZ = navigation.transitionToZ;
+            }
+          } else {
+            player.position.y = navigation.transitionToY;
+            player.position.x = THREE.MathUtils.lerp(navigation.transitionFromX, navigation.transitionStairX, eased);
+            player.position.z = THREE.MathUtils.lerp(navigation.transitionFromZ, navigation.stairExitZ, eased);
+            cameraBob = Math.sin(transitionProgress * Math.PI * 5) * 0.035;
+            if (transitionProgress >= 1) {
+              player.floor = navigation.transitionTargetFloor;
+              navigation.floor = player.floor;
+              navigation.mode = "walking";
+              player.position.x = navigation.transitionStairX;
+              player.position.z = navigation.stairExitZ;
+              collidersRef.current = createCorridorColliders(player.floor, {
+                openInterconnect: player.floor === 8 || player.floor === 10,
+                openDoors: openDoorIdsRef.current,
+              });
+              onWalkFloorChangeRef.current(player.floor);
+              setNavigationMessage(`已到达 ${player.floor}F · 已离开楼梯 · WASD 行走`);
+            }
           }
         } else if (navigation.mode === "elevator-riding") {
           const transitionProgress = THREE.MathUtils.clamp(
@@ -1340,7 +1716,18 @@ export default function BuildingScene({
             const stair = nearestSpatialNode(player.position, "stair", navigation.floor);
             const elevatorHall = nearestSpatialNode(player.position, "elevatorHall", navigation.floor);
             const nearbyDoor = nearestInteractiveDoor(player.position, navigation.floor);
-            if (fpsPointerLockedRef.current && movementKeysRef.current.size === 0) {
+            const canUseStairDirection = (direction: 1 | -1) => {
+              if (!stair) return false;
+              const targetFloor = navigation.floor + direction;
+              const targetStair = SPATIAL_NODES.find(
+                (node) => node.kind === "stair" && node.unit === stair.unit && node.floor === targetFloor,
+              );
+              return Boolean(
+                targetStair
+                && (ALL_DOORS_UNLOCKED || (stair.access !== "locked" && targetStair.access !== "locked")),
+              );
+            };
+            if ((fpsPointerLockedRef.current || walkInputEnabledRef.current) && movementKeysRef.current.size === 0) {
               if (elevatorHall) {
                 setNavigationMessage("E 开门");
               } else if (nearbyDoor) {
@@ -1350,7 +1737,11 @@ export default function BuildingScene({
                     : `E ${nearbyDoor.open ? "关门" : "开门"} · ${nearbyDoor.label}`,
                 );
               } else if (stair) {
-                setNavigationMessage("W 上楼 · S 下楼");
+                const stairDirections = [
+                  canUseStairDirection(1) ? "W 上楼" : null,
+                  canUseStairDirection(-1) ? "S 下楼" : null,
+                ].filter(Boolean);
+                setNavigationMessage(`${stairDirections.join(" · ") || "楼梯到头了"} · A/D 离开`);
               } else {
                 setNavigationMessage("WASD 行走 · 鼠标转向 · E 互动");
               }
@@ -1374,10 +1765,14 @@ export default function BuildingScene({
               && (stairDelta.length() < 0.55
                 || stairMotion.x * stairDelta.x + stairMotion.z * stairDelta.y > 0.2),
             );
-            if (stair && stairDirection !== null && enteringStair) {
-              startStairTransition(stairDirection);
-            } else {
-              const moved = updateKeyboardPlayer(player, movementKeysRef.current, delta, collidersRef.current);
+            host.dataset.stairDistance = stairDelta ? stairDelta.length().toFixed(2) : "none";
+            host.dataset.stairIntent = String(Boolean(stair && stairDirection !== null && enteringStair));
+            if (!(stair && stairDirection !== null && enteringStair && startStairTransition(stairDirection))) {
+              const walkKeys = new Set(movementKeysRef.current);
+              if (stair && stairDirection !== null && enteringStair && !canUseStairDirection(stairDirection)) {
+                walkKeys.delete(stairDirection === 1 ? "w" : "s");
+              }
+              const moved = updateKeyboardPlayer(player, walkKeys, delta, collidersRef.current);
               if (moved) {
                 locomotionPhaseRef.current += delta * (movementKeysRef.current.has("shift") ? 13 : 9);
                 cameraBob = Math.sin(locomotionPhaseRef.current * 2) * 0.042;
@@ -1387,10 +1782,40 @@ export default function BuildingScene({
             }
           }
         }
+        const firstPersonRig = firstPersonRigRef.current;
+        if (firstPersonRig) {
+          firstPersonRig.visible = true;
+          firstPersonRig.position.y = Math.sin(locomotionPhaseRef.current * 2) * 0.018;
+          firstPersonRig.rotation.z = Math.sin(locomotionPhaseRef.current) * 0.012;
+        }
+        const playerShadow = playerShadowRef.current;
+        if (playerShadow) {
+          playerShadow.visible = true;
+          playerShadow.position.set(player.position.x, player.position.y - 0.34, player.position.z);
+          playerShadow.scale.set(1 + Math.abs(cameraBob) * 0.9, 1 - Math.abs(cameraBob) * 0.35, 1);
+        }
+        if (resonanceActive && onResonanceInputRef.current && now - lastResonanceInputAtRef.current > 90) {
+          const moved = resonancePositionInitializedRef.current
+            && player.position.distanceTo(lastResonancePositionRef.current) > 0.015;
+          onResonanceInputRef.current({
+            floor: navigation.floor,
+            position: [player.position.x, player.position.y, player.position.z],
+            moved,
+          });
+          lastResonancePositionRef.current.copy(player.position);
+          resonancePositionInitializedRef.current = true;
+          lastResonanceInputAtRef.current = now;
+        }
         applyFirstPersonCamera(camera, player, cameraBob);
+        if (firstPersonRigRef.current) {
+          firstPersonRigRef.current.position.copy(camera.position);
+          firstPersonRigRef.current.quaternion.copy(camera.quaternion);
+        }
       } else {
         controls.enabled = true;
         controls.update();
+        if (firstPersonRigRef.current) firstPersonRigRef.current.visible = false;
+        if (playerShadowRef.current) playerShadowRef.current.visible = false;
       }
       renderer.render(scene, camera);
     };
@@ -1400,11 +1825,25 @@ export default function BuildingScene({
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
       renderer.domElement.removeEventListener("click", onCanvasClick);
+      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointerup", onPointerUp);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
       document.removeEventListener("pointerlockerror", onPointerLockError);
       window.removeEventListener("mousemove", onPointerMove);
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       controls.dispose();
+      if (firstPersonRigRef.current) {
+        scene.remove(firstPersonRigRef.current);
+        firstPersonRigRef.current.traverse((object) => {
+          const mesh = object as THREE.Mesh;
+          mesh.geometry?.dispose?.();
+          if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
+          else mesh.material?.dispose?.();
+        });
+      }
+      firstPersonRigRef.current = null;
+      playerShadowRef.current = null;
       renderer.dispose();
       renderer.domElement.remove();
       scene.traverse((object) => {
@@ -1414,7 +1853,11 @@ export default function BuildingScene({
         else mesh.material?.dispose?.();
       });
       focusGroupsRef.current.clear();
+      debugGroupsRef.current = [];
+      resonanceLandmarksRef.current = [];
       resonanceSurfacesRef.current = [];
+      floorFieldRef.current.clear();
+      flowerPatchRef.current.clear();
       elevatorDoorsRef.current.clear();
       interactiveDoorsRef.current.clear();
       openDoorIdsRef.current.clear();
@@ -1452,8 +1895,10 @@ export default function BuildingScene({
   useEffect(() => {
     for (const [floor, group] of focusGroupsRef.current.entries()) {
       const active = floorFocus === null || floor === floorFocus;
-      group.visible = floorFocus === null || Math.abs(floor - floorFocus) <= 1;
-      group.position.y = (floor - 5.5) * floorSpread * 0.92;
+      group.visible = cameraCommand === "walk"
+        ? floor === walkFloor
+        : floorFocus === null || Math.abs(floor - floorFocus) <= 1;
+      group.position.y = cameraCommand === "walk" ? 0 : (floor - 5.5) * floorSpread * 0.92;
       group.traverse((object) => {
         const mesh = object as THREE.Mesh;
         const material = mesh.material as THREE.Material & { opacity?: number };
@@ -1468,7 +1913,7 @@ export default function BuildingScene({
         }
       });
     }
-  }, [floorFocus, floorSpread, xray]);
+  }, [cameraCommand, floorFocus, floorSpread, walkFloor, xray]);
 
   useEffect(() => {
     const line = ghostRouteRef.current;
@@ -1549,7 +1994,7 @@ export default function BuildingScene({
           <small>左侧路线、底部播放和事件控制仍可使用；三维楼栋需要系统浏览器渲染。</small>
         </div>
       )}
-      {!rendererError && cameraCommand === "walk" && (
+      {!rendererError && cameraCommand === "walk" && !immersive && (
         <>
           {fpsPointerLocked && <div className="fps-crosshair" aria-hidden="true" />}
           <div className="walk-status" role="status">
